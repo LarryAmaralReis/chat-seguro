@@ -10,6 +10,7 @@ class ChatApp:
         self.root.title("Chat App")
         self.client_socket = None
         self.nickname = nickname
+        self.send_introduction_message()
 
         # Lista de canais disponíveis
         self.channels_list = tk.Listbox(root, selectmode=tk.SINGLE, height=20)
@@ -42,11 +43,6 @@ class ChatApp:
         self.online_users_list = tk.Listbox(root, width=15, height=20)
         self.online_users_list.grid(row=0, column=3, rowspan=2, padx=10, pady=10)
 
-        # Adiciona alguns usuários de exemplo
-        self.add_online_user("Usuario1")
-        self.add_online_user("Usuario2")
-        self.add_online_user("Usuario3")
-
         # Menu de contexto para usuários online
         self.context_menu = tk.Menu(root, tearoff=0)
         self.context_menu.add_command(label="Enviar Mensagem", command=self.send_message_to_user)
@@ -65,6 +61,12 @@ class ChatApp:
         # Função para encerrar a execução das threads antes de fechar a janela
         self.running = False
         if self.client_socket:
+            # Envia mensagem de desconexão ao fechar a janela
+            disconnect_message = {
+                'tipo': 10,
+                'nickname': self.nickname
+            }
+            self.send_to_server(disconnect_message)
             self.client_socket.close()
         self.root.destroy()
 
@@ -92,13 +94,6 @@ class ChatApp:
             self.receive_thread.start()
         except Exception as e:
             print(f"Erro ao conectar ao servidor do canal: {e}")
-
-    def stop_threads(self):
-        # Função para encerrar a execução das threads antes de fechar a janela
-        self.running = False
-        if self.client_socket:
-            self.client_socket.close()
-        self.root.destroy()
 
     def update_conversation_area(self):
         if self.selected_channel:
@@ -151,7 +146,16 @@ class ChatApp:
                     print(f"Mensagem recebida do servidor: {data}")
                     try:
                         received_data = json.loads(data)
-                        self.conversation_area.insert(tk.END, f"{received_data['nickname']} ({received_data['channel']}): {received_data['message']}\n")
+
+                        # Verifica o tipo da mensagem
+                        if received_data['tipo'] == 10 or 2:
+                            # Mensagem de atualização da lista de usuários online
+                            online_users = received_data['online_users']
+                            self.update_online_users(online_users)
+                        else:
+                            # Outros tipos de mensagens
+                            self.conversation_area.insert(tk.END, f"{received_data['nickname']} ({received_data['channel']}): {received_data['message']}\n")
+
                     except json.JSONDecodeError as json_error:
                         print(f"Erro ao decodificar JSON: {json_error}")
             except Exception as e:
@@ -179,4 +183,26 @@ class ChatApp:
                 'message': f"{self.nickname} saiu do canal."
             }
             self.send_to_server(disconnect_message)
+
+    def send_introduction_message(self):
+        # Função para enviar a mensagem de apresentação assim que o cliente entrar no ChatApp
+        try:
+            # Conectar ao servidor na porta 20000
+            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.client_socket.connect(("127.0.0.1", 20000))
+
+            # Enviar mensagem de apresentação
+            introduction_message = {
+                'tipo': 1,  # Tipo 1 indica uma mensagem de apresentação
+                'nickname': self.nickname
+            }
+            self.send_to_server(introduction_message)
+        except Exception as e:
+            print(f"Erro ao conectar ao servidor: {e}")
             
+    def update_online_users(self, online_users):
+        # Função para atualizar a lista de usuários online na interface gráfica
+        self.online_users_list.delete(0, tk.END)  # Limpa a lista atual
+
+        for username in online_users:
+            self.add_online_user(username)
