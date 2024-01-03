@@ -11,6 +11,7 @@ class ChatApp:
         self.client_socket = None
         self.nickname = nickname
         self.send_introduction_message()
+        self.online_users_dict = {}
 
         # Lista de canais disponíveis
         self.channels_list = tk.Listbox(root, selectmode=tk.SINGLE, height=20)
@@ -42,6 +43,9 @@ class ChatApp:
         # Vincula a função de exibir menu de contexto à lista de usuários online
         self.online_users_list = tk.Listbox(root, width=15, height=20)
         self.online_users_list.grid(row=0, column=3, rowspan=2, padx=10, pady=10)
+
+        # Vincula a função de exibir menu de contexto à lista de usuários online
+        self.online_users_list.bind("<Double-1>", self.send_message_to_user)
 
         # Menu de contexto para usuários online
         self.context_menu = tk.Menu(root, tearoff=0)
@@ -100,16 +104,25 @@ class ChatApp:
             self.conversation_area.delete(1.0, tk.END)
             self.conversation_area.insert(tk.END, f"|------------ Canal  {self.selected_channel} ------------|\n")
 
-    def add_online_user(self, username):
-        self.online_users_list.insert(tk.END, username)
-
     def show_context_menu(self, event):
         self.context_menu.post(event.x_root, event.y_root)
 
-    def send_message_to_user(self):
+    def send_message_to_user(self, event=None):
         selected_user = self.online_users_list.get(tk.ACTIVE)
         if selected_user:
-            messagebox.showinfo("Enviar Mensagem", f"Enviar mensagem para {selected_user}")
+            confirmation = messagebox.askquestion("Conectar-se ao Usuário",
+                                                f"Você deseja se conectar a {selected_user}?")
+            if confirmation == 'yes':
+                self.connect_to_user(selected_user)
+
+    def connect_to_user(self, other_user):
+        # Função para se conectar a outro usuário
+        connect_message = {
+            'tipo': 7,  # Tipo 7 indica mensagem de solicitação de conexão a outro usuário
+            'from_user': self.nickname,
+            'to_user': other_user
+        }
+        self.send_to_server(connect_message)
 
     def send_message(self):
         message_text = self.message_entry.get()
@@ -125,8 +138,8 @@ class ChatApp:
                     'message': message_text
                 }
                 self.send_to_server(message_data)
-            self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {message_data['message']}\n")
-            self.message_entry.delete(0, tk.END)
+                self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {message_data['message']}\n")
+                self.message_entry.delete(0, tk.END)
 
     def send_to_server(self, data_dict):
         # Função para enviar dados (dicionário) para o servidor
@@ -152,6 +165,15 @@ class ChatApp:
                             # Mensagem de atualização da lista de usuários online
                             online_users = received_data['online_users']
                             self.update_online_users(online_users)
+                        elif received_data['tipo'] == 7:
+                            # Mensagem de solicitação de conexão
+                            self.handle_connection_request(received_data['from_user'])
+                        elif received_data['tipo'] == 8:
+                            # Mensagem de aceitação de solicitação de conexão
+                            self.handle_connection_acceptance(received_data['from_user'])
+                        elif received_data['tipo'] == 9:
+                            # Mensagem de recusa de solicitação de conexão
+                            self.handle_connection_decline(received_data['from_user'])
                         else:
                             # Outros tipos de mensagens
                             self.conversation_area.insert(tk.END, f"{received_data['nickname']} ({received_data['channel']}): {received_data['message']}\n")
@@ -203,6 +225,45 @@ class ChatApp:
     def update_online_users(self, online_users):
         # Função para atualizar a lista de usuários online na interface gráfica
         self.online_users_list.delete(0, tk.END)  # Limpa a lista atual
+        self.online_users_dict = {} 
 
-        for username in online_users:
+        for username, address in online_users:
+            self.online_users_dict[username] = {'address': address}
             self.add_online_user(username)
+
+    def add_online_user(self, username):
+        if self.nickname != username:
+            self.online_users_list.insert(tk.END, username)
+
+    def handle_connection_request(self, from_user):
+        # Função para lidar com a solicitação de conexão do tipo 7
+        confirmation = messagebox.askquestion("Solicitação de Conexão",
+                                            f"{from_user} quer se conectar a você. Aceitar a solicitação?")
+        if confirmation == 'yes':
+            # Enviar mensagem de aceitação para o servidor
+            accept_message = {
+                'tipo': 8,  # Tipo 8 indica mensagem de aceitação de solicitação de conexão
+                'from_user': self.nickname,
+                'to_user': from_user,
+            }
+            self.send_to_server(accept_message)
+        else:
+            # Enviar mensagem de recusa para o servidor
+            decline_message = {
+                'tipo': 9,  # Tipo 9 indica mensagem de recusa de solicitação de conexão
+                'from_user': self.nickname,
+                'to_user': from_user,
+            }
+            self.send_to_server(decline_message)
+
+    def handle_connection_acceptance(self, from_user):
+        # Função para lidar com a aceitação de solicitação de conexão do tipo 8
+        messagebox.showinfo("Solicitação Aceita", f"{from_user} aceitou sua solicitação de conexão. A comunicação será estabelecida.")
+        # Aqui você pode adicionar a lógica adicional para estabelecer a comunicação com from_user se necessário.
+        self.conversation_area.insert(tk.END, f"|------ Conversando com  {from_user} -----|\n")
+
+    def handle_connection_decline(self, from_user):
+        # Função para lidar com a recusa de solicitação de conexão do tipo 9
+        messagebox.showinfo("Solicitação Recusada", f"{from_user} recusou sua solicitação de conexão.")
+        # Aqui você pode adicionar a lógica adicional se necessário.
+

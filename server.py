@@ -11,6 +11,7 @@ class ChatServer:
         self.server_socket.listen(5)
         self.clients = set()
         self.online_users = set()  # Agora usa um conjunto para garantir usuários únicos
+        self.nickname_to_socket = {}
         self.lock = threading.Lock()
         self.active_threads = set()
 
@@ -57,13 +58,18 @@ class ChatServer:
 
                 print(f"Mensagem recebida do cliente {client_socket.getpeername()}: {data}")
 
-                # Lógica de tratamento de mensagem aqui
-
                 message_data = json.loads(data)
 
                 if message_data['tipo'] == 1:  # Tipo 1 indica mensagem de entrada
                     with self.lock:
-                        self.online_users.add(message_data['nickname'])
+                        user_info = (
+                            message_data['nickname'],
+                            client_socket.getpeername()  # Obtém o endereço IP do cliente conectado
+                        )
+                        self.online_users.add(user_info)
+
+                        # Adiciona ao dicionário de nickname para socket
+                        self.nickname_to_socket[message_data['nickname']] = client_socket
 
                     # Envia a lista de usuários online para todos os clientes
                     online_users_message = json.dumps({
@@ -75,15 +81,73 @@ class ChatServer:
 
                 elif message_data['tipo'] == 10:
                     with self.lock:
-                        self.online_users.remove(message_data['nickname'])
-                    
+                        user_info = (
+                            message_data['nickname'],
+                            client_socket.getpeername()
+                        )
+                        if user_info in self.online_users:
+                            self.online_users.remove(user_info)
+
+                        # Remove do dicionário de nickname para socket
+                        del self.nickname_to_socket[message_data['nickname']]
+
                     # Envia a lista de usuários online para todos os clientes
                     online_users_message = json.dumps({
-                        'tipo': 10,  # Tipo 2 indica mensagem de lista de usuários online
+                        'tipo': 10,  # Tipo 10 indica mensagem de lista de usuários online
                         'online_users': list(self.online_users)
                     })
                     print(f"DIC ONLINE USERS: {online_users_message}")
                     self.broadcast_message(online_users_message)
+                
+                elif message_data['tipo'] == 7:  # Tipo 7 indica solicitação de conexão a outro usuário
+                    with self.lock:
+                        from_user = message_data['from_user']
+                        to_user = message_data['to_user']
+
+                        # Procura o socket do usuário correspondente a to_user
+                        to_user_socket = self.nickname_to_socket.get(to_user)
+                        print(f"To user socket: {to_user_socket}\n")
+                        if to_user_socket:
+                            # Envia a solicitação de conexão para o usuário correspondente a to_user
+                            request_message = json.dumps({
+                                'tipo': 7,
+                                'from_user': from_user,
+                                'to_user': to_user
+                            })
+                            self.send_to_client(request_message, to_user_socket)
+
+                elif message_data['tipo'] == 8:
+                    with self.lock:
+                        from_user = message_data['from_user']
+                        to_user = message_data['to_user']
+
+                        # Procura o socket do usuário correspondente a to_user
+                        to_user_socket = self.nickname_to_socket.get(to_user)
+                        if to_user_socket:
+                            # Envia a solicitação de conexão para o usuário correspondente a to_user
+                            request_message = json.dumps({
+                                'tipo': 8,
+                                'from_user': from_user,
+                                'to_user': to_user
+                            })
+                            self.send_to_client(request_message, to_user_socket)
+                            
+                elif message_data['tipo'] == 9:
+                    with self.lock:
+                        from_user = message_data['from_user']
+                        to_user = message_data['to_user']
+
+                        # Procura o socket do usuário correspondente a to_user
+                        to_user_socket = self.nickname_to_socket.get(to_user)
+                        if to_user_socket:
+                            # Envia a solicitação de conexão para o usuário correspondente a to_user
+                            request_message = json.dumps({
+                                'tipo': 9,
+                                'from_user': from_user,
+                                'to_user': to_user
+                            })
+                            self.send_to_client(request_message, to_user_socket)
+                
 
         except Exception as e:
             print(f"Erro ao lidar com o cliente: {e}")
@@ -98,6 +162,18 @@ class ChatServer:
                 'online_users': list(self.online_users)
             })
             self.broadcast_message(online_users_message)
+
+    def send_to_client(self, message, client_socket):
+        # Função para enviar mensagem para um cliente específico
+        try:
+            client_socket.sendall(message.encode("utf-8"))
+        except Exception as e:
+            print(f"Erro ao enviar mensagem para um cliente: {e}")
+    
+    def find_user_socket(self, username):
+        # Encontra o socket correspondente ao usuário pelo seu nome no dicionário
+        with self.lock:
+            return self.nickname_to_socket.get(username)
 
     def broadcast_message(self, message):
         # Envia uma mensagem para todos os clientes conectados
