@@ -148,7 +148,7 @@ class ChatApp:
                         received_data = json.loads(data)
 
                         # Verifica o tipo da mensagem
-                        if received_data['tipo'] == 10 or 2:
+                        if received_data['tipo'] in [10, 2]:
                             # Mensagem de atualização da lista de usuários online
                             online_users = received_data['online_users']
                             self.update_online_users(online_users)
