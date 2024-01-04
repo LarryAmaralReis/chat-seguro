@@ -69,6 +69,11 @@ class ChatApp:
         self.context_menu = tk.Menu(root, tearoff=0)
         self.context_menu.add_command(label="Enviar Mensagem", command=self.send_message_to_user)
 
+        # Botão de desconexão
+        disconnect_button = tk.Button(root, text="Desconectar", command=self.disconnect_private)
+        disconnect_button.grid(row=2, column=3, padx=5, pady=5)
+
+
         # Flag para indicar se a thread deve continuar executando
         self.running = True
 
@@ -118,6 +123,8 @@ class ChatApp:
         self.root.destroy()
 
     def confirm_join_channel(self, event):
+        self.disconnect_private()
+
         selected_index = self.channels_list.curselection()
         if selected_index:
             self.send_disconnect_message()
@@ -156,6 +163,7 @@ class ChatApp:
             confirmation = messagebox.askquestion("Conectar-se ao Usuário",
                                                 f"Você deseja se conectar a {selected_user}?")
             if confirmation == 'yes':
+                self.disconnect_private()
                 self.connect_to_user(selected_user)
                 # Limpa a área de conversa para uma nova conversa privada
                 self.conversation_area.delete(1.0, tk.END)
@@ -434,7 +442,6 @@ class ChatApp:
 
                 message_data = json.loads(data)
                 if message_data['tipo'] == 100:
-                    print("Dados de conexão chegaram.\n")
                     self.prime = message_data['prime']
                     self.server_public_key = message_data['server_public_key']
                     self.nonce = binascii.unhexlify(message_data['nonce'])
@@ -455,11 +462,12 @@ class ChatApp:
                     self.client_shared_key = key_exchange(self.client_private_key, self.server_public_key, self.prime)
                     print(f"Chave compartilhada do client:{self.client_shared_key}")
 
-
                 elif message_data['tipo'] == 15:
                     mensagem_criptografada = binascii.unhexlify(message_data['message'])
                     mensagem = decrypt_message(self.client_shared_key, mensagem_criptografada, self.nonce)
                     self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {mensagem}\n")
+                elif message_data['tipo'] == 20:
+                    self.disconnect_private()
 
             except Exception as e:
                 print(f"Erro ao receber dados do servidor temporário: {e}")
@@ -485,6 +493,8 @@ class ChatApp:
                     mensagem_criptografada = binascii.unhexlify(message_data['message'])
                     mensagem = decrypt_message(self.server_shared_key, mensagem_criptografada, self.nonce)
                     self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {mensagem}\n")
+                elif message_data['tipo'] == 20:
+                    self.disconnect_private()
 
         except Exception as e:
             print(f"Erro ao lidar com o cliente {address} na porta {porta_canal}: {e}")
@@ -499,5 +509,40 @@ class ChatApp:
                 socket.sendall(json_data.encode("utf-8"))
         except Exception as e:
             print(f"Erro ao enviar dados privados: {e}")
+
+    def disconnect_private(self):
+        dados = {
+            'tipo': 20
+        }
+        if self.temp_server_socket:
+            try:
+                self.send_to_private(dados, self.temp_server_socket)
+                self.temp_server_socket.close()
+            except Exception as e:
+                print(f"Erro ao fechar o socket do servidor temporário: {e}")
+
+        if self.temp_client_socket:
+            try:
+                self.send_to_private(dados, self.temp_client_socket)
+                self.temp_client_socket.close()
+            except Exception as e:
+                print(f"Erro ao fechar o socket do cliente temporário: {e}")
+
+        # Limpar outras variáveis relacionadas à conexão privada
+        self.temp_client_socket = None
+        self.temp_server_socket = None
+
+        self.nonce = None
+        self.prime = None
+
+        self.server_public_key = None
+        self.server_private_key = None
+        self.server_shared_key = None
+        self.client_public_key = None
+        self.client_public_key = None
+        self.client_shared_key = None
+
+        self.conversation_area.delete(1.0, tk.END)
+
 
 
