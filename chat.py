@@ -3,15 +3,20 @@ from tkinter import scrolledtext, messagebox
 import socket
 import threading
 import json
+import socketserver
 
 class ChatApp:
     def __init__(self, root, nickname):
         self.root = root
-        self.root.title("Chat App")
+        self.root.title(f"Chat App - {nickname}")
         self.client_socket = None
         self.nickname = nickname
+        self.server_socket = None
         self.send_introduction_message()
         self.online_users_dict = {}
+        self.temp_server_port = None
+        self.temp_client_socket = None
+        self.temp_server_socket = None
 
         # Lista de canais disponíveis
         self.channels_list = tk.Listbox(root, selectmode=tk.SINGLE, height=20)
@@ -62,16 +67,41 @@ class ChatApp:
         self.root.protocol("WM_DELETE_WINDOW", self.stop_threads)
 
     def stop_threads(self):
-        # Função para encerrar a execução das threads antes de fechar a janela
+        # Para as threads e fecha o socket
         self.running = False
-        if self.client_socket:
+        if self.server_socket:
             # Envia mensagem de desconexão ao fechar a janela
             disconnect_message = {
                 'tipo': 10,
                 'nickname': self.nickname
             }
-            self.send_to_server(disconnect_message)
-            self.client_socket.close()
+            self.send_to_private(disconnect_message, self.server_socket)
+            self.server_socket.close()
+        if self.client_socket:
+            try:
+                # Envia mensagem de desconexão
+                self.send_disconnect_message()
+                self.client_socket.close()
+            except Exception as e:
+                print(f"Erro ao fechar o socket: {e}")
+
+        # Fecha o socket do servidor temporário
+        if self.temp_server_port:
+            try:
+                temp_server_address = ("127.0.0.1", self.temp_server_port)
+                temp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                temp_client_socket.connect(temp_server_address)
+                temp_client_socket.close()
+            except Exception as e:
+                print(f"Erro ao fechar o socket do servidor temporário: {e}")
+
+        # Fecha o socket do cliente temporário
+        if self.temp_client_socket:
+            try:
+                self.temp_client_socket.close()
+            except Exception as e:
+                print(f"Erro ao fechar o socket do cliente temporário: {e}")
+
         self.root.destroy()
 
     def confirm_join_channel(self, event):
@@ -94,7 +124,7 @@ class ChatApp:
         try:
             self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.client_socket.connect(("127.0.0.1", self.selected_channel))
-            self.receive_thread = threading.Thread(target=self.receive_messages)
+            self.receive_thread = threading.Thread(target=self.receive_messages_channel)
             self.receive_thread.start()
         except Exception as e:
             print(f"Erro ao conectar ao servidor do canal: {e}")
@@ -114,6 +144,8 @@ class ChatApp:
                                                 f"Você deseja se conectar a {selected_user}?")
             if confirmation == 'yes':
                 self.connect_to_user(selected_user)
+                # Limpa a área de conversa para uma nova conversa privada
+                self.conversation_area.delete(1.0, tk.END)
 
     def connect_to_user(self, other_user):
         # Função para se conectar a outro usuário
@@ -122,67 +154,112 @@ class ChatApp:
             'from_user': self.nickname,
             'to_user': other_user
         }
-        self.send_to_server(connect_message)
+        self.send_to_private(connect_message, self.server_socket)
 
     def send_message(self):
         message_text = self.message_entry.get()
         if message_text:
-            if self.selected_channel:
-                # Obtendo o nickname do próprio objeto ChatApp
-                nickname = self.nickname
-                # Criando um dicionário aninhado para a mensagem
-                message_data = {
-                    'tipo': 5,
-                    'channel': self.selected_channel,
-                    'nickname': nickname,
-                    'message': message_text
-                }
-                self.send_to_server(message_data)
-                self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {message_data['message']}\n")
-                self.message_entry.delete(0, tk.END)
+            if self.selected_channel or self.temp_client_socket or self.temp_server_socket:
+                if self.temp_client_socket:
+                    # Envia mensagem para o outro cliente privado
+                    message_data = {
+                        'tipo': 15,
+                        'nickname': self.nickname,
+                        'message': message_text
+                    }
+                    self.send_to_private(message_data, self.temp_client_socket)
+                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {message_data['message']}\n")
+                    self.message_entry.delete(0, tk.END)
+                elif self.temp_server_socket:
+                    # Envia mensagem para o outro cliente privado
+                    message_data = {
+                        'tipo': 15,
+                        'nickname': self.nickname,
+                        'message': message_text
+                    }
+                    self.send_to_private(message_data, self.temp_server_socket)
+                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {message_data['message']}\n")
+                    print(f"Servidor {self.nickname} está enviando mensagem para {self.temp_server_socket.getpeername()[1]}")
+                    self.message_entry.delete(0, tk.END)
+                else:
+                    # Se não houver cliente temporário, envia para o canal
+                    nickname = self.nickname
+                    message_data = {
+                        'tipo': 5,
+                        'channel': self.selected_channel,
+                        'nickname': nickname,
+                        'message': message_text
+                    }
+                    self.send_to_server(message_data)
+                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {message_data['message']}\n")
+                    self.message_entry.delete(0, tk.END)
 
     def send_to_server(self, data_dict):
         # Função para enviar dados (dicionário) para o servidor
         try:
-            if self.client_socket:
+            if self.client_socket and self.client_socket.fileno() != -1:  # Verifica se o socket está aberto
                 json_data = json.dumps(data_dict)
                 self.client_socket.sendall(json_data.encode("utf-8"))
         except Exception as e:
             print(f"Erro ao enviar dados para o servidor: {e}")
 
     def receive_messages(self):
-        # Função para receber mensagens do servidor
+        # Function to receive messages from both the server and the channel
         while self.running:
             try:
-                data = self.client_socket.recv(1024).decode("utf-8")
-                if data:
-                    print(f"Mensagem recebida do servidor: {data}")
-                    try:
-                        received_data = json.loads(data)
+                if self.server_socket:
+                    data_server = self.server_socket.recv(1024).decode("utf-8")
+                    if data_server:
+                        self.handle_server_message(data_server)
 
-                        # Verifica o tipo da mensagem
-                        if received_data['tipo'] in [10, 2]:
-                            # Mensagem de atualização da lista de usuários online
-                            online_users = received_data['online_users']
-                            self.update_online_users(online_users)
-                        elif received_data['tipo'] == 7:
-                            # Mensagem de solicitação de conexão
-                            self.handle_connection_request(received_data['from_user'])
-                        elif received_data['tipo'] == 8:
-                            # Mensagem de aceitação de solicitação de conexão
-                            self.handle_connection_acceptance(received_data['from_user'])
-                        elif received_data['tipo'] == 9:
-                            # Mensagem de recusa de solicitação de conexão
-                            self.handle_connection_decline(received_data['from_user'])
-                        else:
-                            # Outros tipos de mensagens
-                            self.conversation_area.insert(tk.END, f"{received_data['nickname']} ({received_data['channel']}): {received_data['message']}\n")
-
-                    except json.JSONDecodeError as json_error:
-                        print(f"Erro ao decodificar JSON: {json_error}")
             except Exception as e:
-                print(f"Erro ao receber dados do servidor: {e}")
+                print(f"Error receiving data: {e}")
                 break
+
+    def handle_server_message(self, data_server):
+        try:
+            received_data = json.loads(data_server)
+            # Process messages from the server
+            if received_data['tipo'] in [10, 2]:
+                # Message type 10 or 2 indicates an update to the online users list
+                online_users = received_data['online_users']
+                self.update_online_users(online_users)
+            elif received_data['tipo'] == 7:
+                # Connection request message
+                self.handle_connection_request(received_data['from_user'])
+            elif received_data['tipo'] == 8:
+                # Connection acceptance message
+                self.handle_connection_acceptance(received_data)
+            elif received_data['tipo'] == 9:
+                # Connection decline message
+                self.handle_connection_decline(received_data['from_user'])
+        except json.JSONDecodeError as json_error:
+            print(f"Error decoding JSON: {json_error}")
+
+    def receive_messages_channel(self):
+        # Function to receive messages from both the server and the channel
+        while self.running:
+            try:
+                if self.client_socket:
+                    data_channel = self.client_socket.recv(1024).decode("utf-8")
+                    if data_channel:
+                        self.handle_channel_message(data_channel)
+
+            except Exception as e:
+                print(f"Error receiving data: {e}")
+                break
+
+    def handle_channel_message(self, data_channel):
+        try:
+            received_data = json.loads(data_channel)
+            if received_data['tipo'] == 0:
+                pass
+            else:
+                # Other message types
+                self.conversation_area.insert(tk.END, f"{received_data['nickname']} ({received_data['channel']}): {received_data['message']}\n")
+
+        except json.JSONDecodeError as json_error:
+            print(f"Error decoding JSON: {json_error}")
 
     def send_connect_message(self):
         if self.selected_channel:
@@ -210,15 +287,15 @@ class ChatApp:
         # Função para enviar a mensagem de apresentação assim que o cliente entrar no ChatApp
         try:
             # Conectar ao servidor na porta 20000
-            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.client_socket.connect(("127.0.0.1", 20000))
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.connect(("127.0.0.1", 20000))
 
             # Enviar mensagem de apresentação
             introduction_message = {
                 'tipo': 1,  # Tipo 1 indica uma mensagem de apresentação
                 'nickname': self.nickname
             }
-            self.send_to_server(introduction_message)
+            self.send_to_private(introduction_message, self.server_socket)
         except Exception as e:
             print(f"Erro ao conectar ao servidor: {e}")
             
@@ -236,34 +313,120 @@ class ChatApp:
             self.online_users_list.insert(tk.END, username)
 
     def handle_connection_request(self, from_user):
-        # Função para lidar com a solicitação de conexão do tipo 7
-        confirmation = messagebox.askquestion("Solicitação de Conexão",
-                                            f"{from_user} quer se conectar a você. Aceitar a solicitação?")
-        if confirmation == 'yes':
-            # Enviar mensagem de aceitação para o servidor
-            accept_message = {
-                'tipo': 8,  # Tipo 8 indica mensagem de aceitação de solicitação de conexão
-                'from_user': self.nickname,
-                'to_user': from_user,
-            }
-            self.send_to_server(accept_message)
-        else:
-            # Enviar mensagem de recusa para o servidor
-            decline_message = {
-                'tipo': 9,  # Tipo 9 indica mensagem de recusa de solicitação de conexão
-                'from_user': self.nickname,
-                'to_user': from_user,
-            }
-            self.send_to_server(decline_message)
+        # Função para lidar com o pedido de conexão de outro usuário
+        confirmação = messagebox.askquestion("Pedido de Conexão", f"{from_user} quer se conectar. Aceitar o pedido?")
+        if confirmação == 'yes':
+            # Cria um servidor temporário para a conexão
+            self.temp_server_port = self.get_free_port()
+            temp_server_thread = threading.Thread(target=self.create_server, args=(self.temp_server_port,))
+            temp_server_thread.start()
 
-    def handle_connection_acceptance(self, from_user):
-        # Função para lidar com a aceitação de solicitação de conexão do tipo 8
-        messagebox.showinfo("Solicitação Aceita", f"{from_user} aceitou sua solicitação de conexão. A comunicação será estabelecida.")
-        # Aqui você pode adicionar a lógica adicional para estabelecer a comunicação com from_user se necessário.
-        self.conversation_area.insert(tk.END, f"|------ Conversando com  {from_user} -----|\n")
+            # Envia uma mensagem ao servidor sobre a aceitação do pedido e a porta do servidor temporário
+            mensagem_aceitacao = {
+                'tipo': 8,
+                'from_user': self.nickname,
+                'to_user': from_user,
+                'temp_server_port': self.temp_server_port
+            }
+            self.send_to_private(mensagem_aceitacao, self.server_socket)
+            self.conversation_area.delete(1.0, tk.END)
+            self.conversation_area.insert(tk.END, f"|------ Conversando com {mensagem_aceitacao['to_user']} -----|\n")
+        else:
+            # Envia uma mensagem ao servidor sobre a recusa do pedido
+            mensagem_recusa = {
+                'tipo': 9,
+                'from_user': self.nickname,
+                'to_user': from_user,
+            }
+            self.send_to_private(mensagem_recusa, self.server_socket)
+
+    def handle_connection_acceptance(self, dados_recebidos):
+        # Lidar com a aceitação de um pedido de conexão
+        messagebox.showinfo("Pedido Aceito", f"{dados_recebidos['from_user']} aceitou seu pedido de conexão. A comunicação será estabelecida.")
+
+        # Conectar ao servidor temporário do outro usuário
+        temp_server_address = ("127.0.0.1", dados_recebidos['temp_server_port'])
+        self.temp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.temp_client_socket.connect(temp_server_address)
+
+        # Inicia uma thread para receber mensagens do servidor temporário
+        temp_receive_thread = threading.Thread(target=self.receive_temp_messages)
+        temp_receive_thread.start()
+
+        # Lógica adicional se necessário
+        self.conversation_area.insert(tk.END, f"|------ Conversando com {dados_recebidos['from_user']} -----|\n")
+
 
     def handle_connection_decline(self, from_user):
         # Função para lidar com a recusa de solicitação de conexão do tipo 9
         messagebox.showinfo("Solicitação Recusada", f"{from_user} recusou sua solicitação de conexão.")
         # Aqui você pode adicionar a lógica adicional se necessário.
+
+    def get_free_port(self):
+        # Encontra uma porta livre para o servidor temporário
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('127.0.0.1', 0))
+            return s.getsockname()[1]
+        
+    def create_server(self, porta):
+        # Cria um servidor para lidar com conexões de outros clientes
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.bind(("127.0.0.1", porta))
+        server_socket.listen(5)
+
+        print(f"Servidor temporário escutando em {porta}")
+
+        while True:
+            client_socket, address = server_socket.accept()
+            print(f"Conexão aceita de {address} na porta {porta}")
+            self.temp_server_socket = client_socket
+            # Inicia uma thread para lidar com a comunicação com o cliente
+            thread_cliente_handler = threading.Thread(target=self.handle_client_temp, args=(client_socket, address, porta))
+            thread_cliente_handler.start()
+
+    def receive_temp_messages(self):
+        # Recebe mensagens do servidor temporário
+        while self.running:
+            try:
+                data = self.temp_client_socket.recv(1024).decode("utf-8")
+                if not data:
+                    break
+                print(f"Mensagem recebida do servidor temporário: {data}")
+
+                message_data = json.loads(data)
+                if message_data['tipo'] == 15:
+                    self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {message_data['message']}\n")
+
+            except Exception as e:
+                print(f"Erro ao receber dados do servidor temporário: {e}")
+                break
+
+    def handle_client_temp(self, client_socket, address, porta_canal):
+        # Lida com a comunicação com um cliente conectado ao servidor temporário
+        try:
+            # Lógica adicional para lidar com mensagens do cliente
+            while True:
+                data = client_socket.recv(1024).decode("utf-8")
+                if not data:
+                    break
+                print(f"Mensagem recebida do cliente {address} na porta {porta_canal}: {data}")
+                
+                message_data = json.loads(data)
+                if message_data['tipo'] == 15:
+                    self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {message_data['message']}\n")
+
+        except Exception as e:
+            print(f"Erro ao lidar com o cliente {address} na porta {porta_canal}: {e}")
+        finally:
+            client_socket.close()
+    
+    def send_to_private(self, data_dict, socket):
+        # Função para enviar dados (dicionário) para o servidor
+        try:
+            if socket and socket.fileno() != -1:
+                json_data = json.dumps(data_dict)
+                socket.sendall(json_data.encode("utf-8"))
+        except Exception as e:
+            print(f"Erro ao enviar dados privados: {e}")
+
 

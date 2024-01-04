@@ -106,7 +106,6 @@ class ChatServer:
 
                         # Procura o socket do usuário correspondente a to_user
                         to_user_socket = self.nickname_to_socket.get(to_user)
-                        print(f"To user socket: {to_user_socket}\n")
                         if to_user_socket:
                             # Envia a solicitação de conexão para o usuário correspondente a to_user
                             request_message = json.dumps({
@@ -120,6 +119,7 @@ class ChatServer:
                     with self.lock:
                         from_user = message_data['from_user']
                         to_user = message_data['to_user']
+                        temp_server_port = message_data['temp_server_port']
 
                         # Procura o socket do usuário correspondente a to_user
                         to_user_socket = self.nickname_to_socket.get(to_user)
@@ -128,7 +128,8 @@ class ChatServer:
                             request_message = json.dumps({
                                 'tipo': 8,
                                 'from_user': from_user,
-                                'to_user': to_user
+                                'to_user': to_user,
+                                'temp_server_port': temp_server_port
                             })
                             self.send_to_client(request_message, to_user_socket)
                             
