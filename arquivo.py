@@ -1,10 +1,13 @@
-import json
+from os import urandom
+import binascii
 
-# Exemplo de dicionário
-data_dict = {'channel': 20001, 'nickname': 'Alice', 'message': 'Olá, mundo!'}
+nonce = urandom(16)
 
-# Converter o dicionário em uma string JSON
-json_data = json.dumps(data_dict)
+hex_nonce = binascii.hexlify(nonce)
 
-# Imprimir a string JSON
-print(json_data)
+# Convertendo representação hexadecimal de volta para bytes
+decoded_nonce_bytes = binascii.unhexlify(hex_nonce)
+
+print(f'Original Bytes: {nonce}')
+print(f'Hexadecimal: {hex_nonce}')
+print(f'Decoded Bytes: {decoded_nonce_bytes}')

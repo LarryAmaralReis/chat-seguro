@@ -3,7 +3,10 @@ from tkinter import scrolledtext, messagebox
 import socket
 import threading
 import json
-import socketserver
+from dh import *
+from functions import *
+from os import urandom
+import binascii
 
 class ChatApp:
     def __init__(self, root, nickname):
@@ -17,6 +20,16 @@ class ChatApp:
         self.temp_server_port = None
         self.temp_client_socket = None
         self.temp_server_socket = None
+
+        self.nonce = None
+        self.prime = None
+
+        self.server_public_key = None
+        self.server_private_key = None
+        self.server_shared_key = None
+        self.client_public_key = None
+        self.client_public_key = None
+        self.client_shared_key = None
 
         # Lista de canais disponíveis
         self.channels_list = tk.Listbox(root, selectmode=tk.SINGLE, height=20)
@@ -162,23 +175,29 @@ class ChatApp:
             if self.selected_channel or self.temp_client_socket or self.temp_server_socket:
                 if self.temp_client_socket:
                     # Envia mensagem para o outro cliente privado
+                    mensagem_area = message_text
+                    messagem_criptografada = encrypt_message(self.client_shared_key, message_text, self.nonce)
+                    message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
                     message_data = {
                         'tipo': 15,
                         'nickname': self.nickname,
                         'message': message_text
                     }
                     self.send_to_private(message_data, self.temp_client_socket)
-                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {message_data['message']}\n")
+                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {mensagem_area}\n")
                     self.message_entry.delete(0, tk.END)
                 elif self.temp_server_socket:
                     # Envia mensagem para o outro cliente privado
+                    mensagem_area = message_text
+                    messagem_criptografada = encrypt_message(self.server_shared_key, message_text, self.nonce)
+                    message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
                     message_data = {
                         'tipo': 15,
                         'nickname': self.nickname,
                         'message': message_text
                     }
                     self.send_to_private(message_data, self.temp_server_socket)
-                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {message_data['message']}\n")
+                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {mensagem_area}\n")
                     print(f"Servidor {self.nickname} está enviando mensagem para {self.temp_server_socket.getpeername()[1]}")
                     self.message_entry.delete(0, tk.END)
                 else:
@@ -376,6 +395,22 @@ class ChatApp:
 
         print(f"Servidor temporário escutando em {porta}")
 
+        server_private_key, server_public_key, prime = generate_dh_key_pair()
+        nonce = urandom(16)
+        aux = nonce
+        self.server_private_key = server_private_key
+        self.server_public_key = server_public_key
+        self.prime = prime
+        self.nonce = binascii.hexlify(nonce).decode('utf-8')
+
+        dados = {
+                'tipo': 100,
+                'nickname': self.nickname,
+                'prime': self.prime,
+                'server_public_key': self.server_public_key,
+                'nonce': self.nonce
+            }
+        
         while True:
             client_socket, address = server_socket.accept()
             print(f"Conexão aceita de {address} na porta {porta}")
@@ -383,6 +418,10 @@ class ChatApp:
             # Inicia uma thread para lidar com a comunicação com o cliente
             thread_cliente_handler = threading.Thread(target=self.handle_client_temp, args=(client_socket, address, porta))
             thread_cliente_handler.start()
+
+            self.send_to_private(dados, self.temp_server_socket)
+            self.nonce = aux
+            
 
     def receive_temp_messages(self):
         # Recebe mensagens do servidor temporário
@@ -394,8 +433,33 @@ class ChatApp:
                 print(f"Mensagem recebida do servidor temporário: {data}")
 
                 message_data = json.loads(data)
-                if message_data['tipo'] == 15:
-                    self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {message_data['message']}\n")
+                if message_data['tipo'] == 100:
+                    print("Dados de conexão chegaram.\n")
+                    self.prime = message_data['prime']
+                    self.server_public_key = message_data['server_public_key']
+                    self.nonce = binascii.unhexlify(message_data['nonce'])
+
+                    client_private_key, client_public_key, _ = generate_dh_key_pair(self.prime)
+
+                    self.client_private_key = client_private_key
+                    self.client_public_key = client_public_key
+
+                    dados = {
+                        'tipo': 100,
+                        'nickname': self.nickname,
+                        'client_public_key': self.client_public_key,
+                    }
+
+                    self.send_to_private(dados, self.temp_client_socket)
+
+                    self.client_shared_key = key_exchange(self.client_private_key, self.server_public_key, self.prime)
+                    print(f"Chave compartilhada do client:{self.client_shared_key}")
+
+
+                elif message_data['tipo'] == 15:
+                    mensagem_criptografada = binascii.unhexlify(message_data['message'])
+                    mensagem = decrypt_message(self.client_shared_key, mensagem_criptografada, self.nonce)
+                    self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {mensagem}\n")
 
             except Exception as e:
                 print(f"Erro ao receber dados do servidor temporário: {e}")
@@ -412,8 +476,15 @@ class ChatApp:
                 print(f"Mensagem recebida do cliente {address} na porta {porta_canal}: {data}")
                 
                 message_data = json.loads(data)
-                if message_data['tipo'] == 15:
-                    self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {message_data['message']}\n")
+                if message_data['tipo'] == 100:
+                    self.client_public_key = message_data['client_public_key']
+                    self.server_shared_key = key_exchange(self.server_private_key, self.client_public_key, self.prime)
+                    print(f"Chave compartilhada do servidor:{self.server_shared_key}")
+                    
+                elif message_data['tipo'] == 15:
+                    mensagem_criptografada = binascii.unhexlify(message_data['message'])
+                    mensagem = decrypt_message(self.server_shared_key, mensagem_criptografada, self.nonce)
+                    self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {mensagem}\n")
 
         except Exception as e:
             print(f"Erro ao lidar com o cliente {address} na porta {porta_canal}: {e}")
@@ -421,7 +492,7 @@ class ChatApp:
             client_socket.close()
     
     def send_to_private(self, data_dict, socket):
-        # Função para enviar dados (dicionário) para o servidor
+        # Função para enviar dados diretamente
         try:
             if socket and socket.fileno() != -1:
                 json_data = json.dumps(data_dict)
