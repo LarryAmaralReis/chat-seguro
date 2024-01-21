@@ -494,6 +494,7 @@ class ChatApp:
                     mensagem = decrypt_message(self.server_shared_key, mensagem_criptografada, self.nonce)
                     self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {mensagem}\n")
                 elif message_data['tipo'] == 20:
+                    self.conversation_area.delete(1.0, tk.END)
                     self.disconnect_private()
 
         except Exception as e:
