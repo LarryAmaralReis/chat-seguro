@@ -31,11 +31,11 @@ def derive_chacha20_key(shared_key, nonce):
 
 def encrypt_message(message, key, nonce):
     chacha_key = derive_chacha20_key(key, nonce)
-
+    print(f"Cha Cha Key: {chacha_key}")
     cipher = Cipher(algorithms.ChaCha20(chacha_key, nonce), mode=None, backend=default_backend())
-
+    print(f"Cipher: {cipher}")
     encryptor = cipher.encryptor()
-
+    print(f"Encryptor: {encryptor}")
     ciphertext = encryptor.update(message) + encryptor.finalize()
 
     return ciphertext
@@ -43,13 +43,13 @@ def encrypt_message(message, key, nonce):
 def decrypt_message(ciphertext, key, nonce):
     # Derive a key for ChaCha20
     chacha_key = derive_chacha20_key(key, nonce)
-
+    print(f"Cha Cha Key 2: {chacha_key}")
     # Initialize the ChaCha20 cipher
     cipher = Cipher(algorithms.ChaCha20(chacha_key, nonce), mode=None, backend=default_backend())
-
+    print(f"Cipher 2: {cipher}")
     # Create the decryptor object
     decryptor = cipher.decryptor()
-
+    print(f"Decryptor 2: {decryptor}")
     # Decrypt the message
     plaintext = decryptor.update(ciphertext) + decryptor.finalize()
 

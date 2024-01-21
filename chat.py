@@ -344,6 +344,7 @@ class ChatApp:
         confirmação = messagebox.askquestion("Pedido de Conexão", f"{from_user} quer se conectar. Aceitar o pedido?")
         if confirmação == 'yes':
             # Cria um servidor temporário para a conexão
+            self.disconnect_private()
             self.temp_server_port = self.get_free_port()
             temp_server_thread = threading.Thread(target=self.create_server, args=(self.temp_server_port,))
             temp_server_thread.start()
@@ -382,7 +383,6 @@ class ChatApp:
 
         # Lógica adicional se necessário
         self.conversation_area.insert(tk.END, f"|------ Conversando com {dados_recebidos['from_user']} -----|\n")
-
 
     def handle_connection_decline(self, from_user):
         # Função para lidar com a recusa de solicitação de conexão do tipo 9
@@ -430,7 +430,6 @@ class ChatApp:
             self.send_to_private(dados, self.temp_server_socket)
             self.nonce = aux
             
-
     def receive_temp_messages(self):
         # Recebe mensagens do servidor temporário
         while self.running:
@@ -467,6 +466,7 @@ class ChatApp:
                     mensagem = decrypt_message(self.client_shared_key, mensagem_criptografada, self.nonce)
                     self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {mensagem}\n")
                 elif message_data['tipo'] == 20:
+                    self.conversation_area.delete(1.0, tk.END)
                     self.disconnect_private()
 
             except Exception as e:
