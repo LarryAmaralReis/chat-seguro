@@ -73,7 +73,6 @@ class ChatApp:
         disconnect_button = tk.Button(root, text="Desconectar", command=self.disconnect_private)
         disconnect_button.grid(row=2, column=3, padx=5, pady=5)
 
-
         # Flag para indicar se a thread deve continuar executando
         self.running = True
 
@@ -86,6 +85,7 @@ class ChatApp:
 
     def stop_threads(self):
         # Para as threads e fecha o socket
+        self.disconnect_private()
         self.running = False
         if self.server_socket:
             # Envia mensagem de desconexão ao fechar a janela
@@ -134,12 +134,12 @@ class ChatApp:
                                                 f"Tem certeza de que deseja entrar no Canal {selected_channel}?")
             if confirmation == 'yes':
                 self.selected_channel = selected_channel
-                self.connect_to_server()
+                self.connect_to_channel()
                 messagebox.showinfo("Canal Selecionado", f"Entrou no Canal {self.selected_channel}")
                 self.send_connect_message()
                 self.update_conversation_area()
 
-    def connect_to_server(self):
+    def connect_to_channel(self):
         # Função para conectar ao servidor do canal
         try:
             self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -153,9 +153,6 @@ class ChatApp:
         if self.selected_channel:
             self.conversation_area.delete(1.0, tk.END)
             self.conversation_area.insert(tk.END, f"|------------ Canal  {self.selected_channel} ------------|\n")
-
-    def show_context_menu(self, event):
-        self.context_menu.post(event.x_root, event.y_root)
 
     def send_message_to_user(self, event=None):
         selected_user = self.online_users_list.get(tk.ACTIVE)
@@ -211,6 +208,9 @@ class ChatApp:
                 else:
                     # Se não houver cliente temporário, envia para o canal
                     nickname = self.nickname
+                    aux = message_text
+                    messagem_criptografada = encrypt_message(self.client_shared_key, message_text, self.nonce)
+                    message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
                     message_data = {
                         'tipo': 5,
                         'channel': self.selected_channel,
@@ -218,7 +218,7 @@ class ChatApp:
                         'message': message_text
                     }
                     self.send_to_server(message_data)
-                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {message_data['message']}\n")
+                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {aux}\n")
                     self.message_entry.delete(0, tk.END)
 
     def send_to_server(self, data_dict):
@@ -281,32 +281,60 @@ class ChatApp:
             received_data = json.loads(data_channel)
             if received_data['tipo'] == 0:
                 pass
+            elif received_data['tipo'] == 200:
+                self.prime = received_data['prime']
+                self.server_public_key = received_data['channel_public_key']
+                self.nonce = binascii.unhexlify(received_data['nonce'])
+                print(f"Self.Nonce: {self.nonce}")
+                print(f"Self.Prime: {self.prime}")
+                client_private_key, client_public_key, _ = generate_dh_key_pair(self.prime)
+
+                self.client_private_key = client_private_key
+                self.client_public_key = client_public_key
+
+                dados = {
+                        'tipo': 200,
+                        'nickname': self.nickname,
+                        'client_public_key': self.client_public_key,
+                    }
+
+                self.send_to_private(dados, self.client_socket)
+
+                self.client_shared_key = key_exchange(self.client_private_key, self.server_public_key, self.prime)
+                print(f"Chave compartilhada do cliente/canal:{self.client_shared_key}")
             else:
                 # Other message types
-                self.conversation_area.insert(tk.END, f"{received_data['nickname']} ({received_data['channel']}): {received_data['message']}\n")
+                mensagem_criptografada = binascii.unhexlify(received_data['message'])
+                mensagem = decrypt_message(self.client_shared_key, mensagem_criptografada, self.nonce)
+                self.conversation_area.insert(tk.END, f"{received_data['nickname']} ({received_data['channel']}): {mensagem}\n")
 
         except json.JSONDecodeError as json_error:
             print(f"Error decoding JSON: {json_error}")
 
     def send_connect_message(self):
         if self.selected_channel:
-            # Criando um dicionário aninhado para a mensagem de desconexão
+            message_text = f"{self.nickname} entrou no canal."
+            messagem_criptografada = encrypt_message(self.client_shared_key, message_text, self.nonce)
+            message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
             connect_message = {
                 'tipo': 5,
                 'channel': self.selected_channel,
                 'nickname': self.nickname,
-                'message': f"{self.nickname} entrou no canal."
+                'message': message_text
             }
             self.send_to_server(connect_message)
 
     def send_disconnect_message(self):
         if self.selected_channel:
-            # Criando um dicionário aninhado para a mensagem de desconexão
+            message_text = f"{self.nickname} saiu do canal."
+            messagem_criptografada = encrypt_message(self.client_shared_key, message_text, self.nonce)
+            message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
+
             disconnect_message = {
                 'tipo': 6,
                 'channel': self.selected_channel,
                 'nickname': self.nickname,
-                'message': f"{self.nickname} saiu do canal."
+                'message': message_text
             }
             self.send_to_server(disconnect_message)
 
@@ -333,11 +361,8 @@ class ChatApp:
 
         for username, address in online_users:
             self.online_users_dict[username] = {'address': address}
-            self.add_online_user(username)
-
-    def add_online_user(self, username):
-        if self.nickname != username:
-            self.online_users_list.insert(tk.END, username)
+            if self.nickname != username:
+                self.online_users_list.insert(tk.END, username)
 
     def handle_connection_request(self, from_user):
         # Função para lidar com o pedido de conexão de outro usuário
@@ -528,19 +553,23 @@ class ChatApp:
                 self.temp_client_socket.close()
             except Exception as e:
                 print(f"Erro ao fechar o socket do cliente temporário: {e}")
-
+                
+        selected_index = self.channels_list.curselection()
+        if self.selected_channel:
+            self.send_disconnect_message()
         # Limpar outras variáveis relacionadas à conexão privada
         self.temp_client_socket = None
         self.temp_server_socket = None
+        self.selected_channel = None
 
-        self.nonce = None
-        self.prime = None
+        #self.nonce = None
+        #self.prime = None
 
-        self.server_public_key = None
-        self.server_private_key = None
-        self.server_shared_key = None
-        self.client_public_key = None
-        self.client_public_key = None
+        #self.server_public_key = None
+        #self.server_private_key = None
+        #self.server_shared_key = None
+        #self.client_public_key = None
+        #self.client_public_key = None
         self.client_shared_key = None
 
         self.conversation_area.delete(1.0, tk.END)
