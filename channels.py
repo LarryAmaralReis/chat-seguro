@@ -68,9 +68,10 @@ class ChatChannels:
                         self.send_to_private(message, client_socket, tuple(client_data['udp_address']))
 
         except Exception as e:
-            print(f"Erro ao lidar com o cliente {address} no canal {channel_port}: {e}")
+            pass
+            #print(f"Erro ao lidar com o cliente {address} no canal {channel_port}: {e}")
         finally:
-            del self.channels[channel_port][client_socket]
+            del self.channels[channel_port][data['nickname']]
             client_socket.close()
 
     def create_channel(self, port):

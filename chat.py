@@ -178,6 +178,12 @@ class Chat(ctk.CTkToplevel):
                         self.online_users_dict[data['nickname']]['nonce'] = self.nonce
 
                     self.current_conversation = data['nickname']
+
+                    self.conversation_area.configure(state="normal")
+                    self.conversation_area.delete(1.0, ctk.END)
+                    self.conversation_area.insert(ctk.END, f"[Servidor] Conversando com {self.current_conversation}!\n")
+                    self.conversation_area.configure(state="disabled")
+
                     self.close_button_verify()
 
                     CTkMessagebox(title="Solicitação", message=f"Solicitação de {data['nickname']} aceita!", icon="check")
@@ -211,14 +217,21 @@ class Chat(ctk.CTkToplevel):
                 if data['tipo'] == 22:
                     self.channel_users = {}
                     self.channel_users = data['channel_users']
+
                     if self.online_users_dict[data['new_user']]['shared_key'] is None and data['new_user'] != self.nickname:
                         address = tuple(self.online_users_dict[data['new_user']]['udp_address'])
                         self.solicitar_dados(address)
 
                     if data['new_user'] != self.nickname:
                         self.conversation_area.configure(state="normal")
-                        self.conversation_area.insert(ctk.END, f"{data['new_user']} entrou no canal!\n")
+                        if self.channel_conversation is not None:
+                            self.conversation_area.insert(ctk.END, f"[Canal {self.channel_conversation}]: {data['new_user']} entrou no canal!\n")
                         self.conversation_area.configure(state="disabled")
+                    else:
+                        self.conversation_area.configure(state="normal")
+                        self.conversation_area.insert(ctk.END, f"[Canal {self.channel_conversation}] neste canal estão: {self.channel_users}\n")
+                        self.conversation_area.configure(state="disabled")
+
 
                 if data['tipo'] == 23:
                     self.responder_dados(data)
@@ -249,7 +262,8 @@ class Chat(ctk.CTkToplevel):
 
                     if data['old_user'] != self.nickname:
                         self.conversation_area.configure(state="normal")
-                        self.conversation_area.insert(ctk.END, f"{data['old_user']} saiu do canal!\n")
+                        if self.channel_conversation is not None:
+                            self.conversation_area.insert(ctk.END, f"[Canal {self.channel_conversation}]: {data['old_user']} saiu do canal!\n")
                         self.conversation_area.configure(state="disabled")
 
             except Exception as e:
@@ -282,10 +296,11 @@ class Chat(ctk.CTkToplevel):
             self.conversation_area.configure(state="normal")
             self.conversation_area.insert(ctk.END, f"Você ({self.nickname}): {self.message_entry.get()}\n")
 
+            aux = self.message_entry.get()
+
             for user in self.channel_users:
                 if self.online_users_dict[user]['shared_key'] is not None and user != self.nickname:
-
-                    message_text = self.message_entry.get()
+                    message_text = aux
                     address = tuple(self.online_users_dict[user]['udp_address'])
                     shared_key = self.online_users_dict[user]['shared_key']
                     nonce = self.online_users_dict[user]['nonce']
@@ -299,6 +314,7 @@ class Chat(ctk.CTkToplevel):
                     }
 
                     self.send_to_private(message_data, address)
+                    self.message_entry.delete(0, ctk.END)
 
     def send_to_private(self, data_dict, address):
         try:
@@ -328,7 +344,7 @@ class Chat(ctk.CTkToplevel):
                     #public_key = 3333333333
                     #self.prime = 3
                     #aux = "3"
-
+                self.deactivate_listbox()
                 self.enviar_solicitacao(address, public_key, self.prime, aux)
 
     def solicitar_dados(self, address):
@@ -365,6 +381,8 @@ class Chat(ctk.CTkToplevel):
         self.send_to_private(message, address)
 
     def enviar_solicitacao(self, address, public_key, prime, nonce):
+        self.close()
+        self.close_channel()
         message = {
             'tipo': 5,
             'nickname': self.nickname,
@@ -396,6 +414,10 @@ class Chat(ctk.CTkToplevel):
         prime = data['prime']
         nonce = binascii.unhexlify(data['nonce'])
 
+        self.conversation_area.configure(state="normal")
+        self.conversation_area.insert(ctk.END, f"[Servidor] Conversando com {nickname}!\n")
+        self.conversation_area.configure(state="disabled")
+
         if self.online_users_dict[nickname]['shared_key'] == None:
             self.private_key, self.public_key, _ = generate_dh_key_pair(prime)
             shared_key = key_exchange(self.private_key, public_key, prime)
@@ -411,7 +433,7 @@ class Chat(ctk.CTkToplevel):
         
         self.current_conversation = nickname
         self.close_button_verify()
-        self.activate_listbox()
+        self.deactivate_listbox()
 
     def solicitacao_negada(self, address):
         message = {
@@ -444,6 +466,8 @@ class Chat(ctk.CTkToplevel):
             msg = CTkMessagebox(title="Confirmação", message=f"Fechar canal?", icon="warning", option_1="Não", option_2="Sim")
             confirmation = msg.get()
             if confirmation == 'Sim':
+                self.deactivate_listbox()
+
                 address = tuple(self.channels_dict[self.channel_conversation]['udp_address'])
                 message = {
                     'tipo': 31,
@@ -531,7 +555,6 @@ class Chat(ctk.CTkToplevel):
 
     def confirm_join_channel(self, event):
         selected_index = self.channels_list.curselection()
-        print(selected_index)
         if selected_index >= 0:
             selected_channel = self.available_channels[selected_index]
             msg = CTkMessagebox(title="Confirmação", message=f"Tem certeza de que deseja entrar no Canal {selected_channel}?", icon="question", option_1="Não", option_2="Sim")
@@ -549,6 +572,10 @@ class Chat(ctk.CTkToplevel):
         self.channel_conversation = selected_channel
         self.close_button_verify()
 
+        self.conversation_area.configure(state="normal")
+        self.conversation_area.insert(ctk.END, f"[Canal {self.channel_conversation}] Seja bem-vindo(a)!\n")
+        self.conversation_area.configure(state="disabled")
+
         address = tuple(self.channels_dict[selected_channel]['udp_address'])
         message = {
             'tipo': 21,
@@ -557,21 +584,11 @@ class Chat(ctk.CTkToplevel):
         }
         self.send_to_private(message, address)
 
-    def activate_listbox(self):
-        if self.current_conversation is not None:
-            self.online_users_list.selection_clear()
-
-            # Obtém o índice do usuário na lista de usuários online
-            index = None
-            for i, username in enumerate(self.online_users_dict.keys()):
-                if username == self.current_conversation:
-                    index = i
-                    break
-
-            # Ativa o usuário na lista de usuários online
-            if index is not None:
-                self.online_users_list.activate(index)
-    
     def deactivate_listbox(self):
-        if self.current_conversation is not None:
-            self.online_users_list.selection_clear()
+        selected_indices = self.online_users_list.curselection()
+        if selected_indices is not None:
+            self.online_users_list.deactivate(selected_indices)
+
+        selected_indices = self.channels_list.curselection()
+        if selected_indices is not None:
+            self.channels_list.deactivate(selected_indices)
