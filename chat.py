@@ -1,534 +1,111 @@
-import tkinter as tk
-from tkinter import scrolledtext, messagebox
+import customtkinter as ctk
+from CTkListbox import *
+from CTkMessagebox import CTkMessagebox
+from PIL import Image
+from firebase import *
+
 import socket
 import threading
 import json
-from dh import *
-from functions import *
 from os import urandom
 import binascii
+from functions import *
 
-class ChatApp:
-    def __init__(self, root, nickname):
-        self.root = root
-        self.root.title(f"Chat App - {nickname}")
-        self.client_socket = None
-        self.nickname = nickname
+class Chat(ctk.CTkToplevel):
+    def __init__(self, login):
+        super().__init__()
+        ctk.set_appearance_mode("dark")
+        self.resizable(False, False)
+        self.nickname = get_nickname_by_login(login)
+        self.title(f"CriptoChat - {self.nickname}")
+        self.geometry("736x438")
+
+        #------------------------------#
         self.server_socket = None
-        self.send_introduction_message()
-        self.online_users_dict = {}
-        self.temp_server_port = None
-        self.temp_client_socket = None
-        self.temp_server_socket = None
+        self.udp_socket = None
+        self.udp_port = self.get_free_port()
 
-        self.nonce = None
+        self.udp_server_thread = threading.Thread(target=self.create_server_udp, args=(self.udp_port,))
+        self.udp_server_thread.start()
+
+        self.connect_server_tcp()
+        self.online_users_dict = {
+        }
+        self.channels_dict = {
+            20001: {
+                'udp_address': ['127.0.0.1', 20001],
+            },
+            20002: {
+                'udp_address': ['127.0.0.1', 20002],
+            },
+            20003: {
+                'udp_address': ['127.0.0.1', 20003],
+            }
+        }
+        self.channel_users = {}
+        #------------------------------#
+        self.current_conversation = None
+        self.channel_conversation = None
+        self.private_key = None
+        self.public_key = None
         self.prime = None
+        self.nonce = None
+        #------------------------------#
 
-        self.server_public_key = None
-        self.server_private_key = None
-        self.server_shared_key = None
-        self.client_public_key = None
-        self.client_public_key = None
-        self.client_shared_key = None
+        self.frame = ctk.CTkFrame(self)
+        self.frame.grid(row=0, column=0, padx=10, pady=10)
 
-        # Lista de canais disponíveis
-        self.channels_list = tk.Listbox(root, selectmode=tk.SINGLE, height=20)
-        self.channels_list.grid(row=0, column=0, padx=10, pady=10)
+        self.channels_list = CTkListbox(self.frame, width=100, height=350, command=self.confirm_join_channel)
+        self.channels_list.grid(row=1, column=1, rowspan=2, padx=10)
 
-        # Adiciona os canais disponíveis à lista
         self.available_channels = [20001, 20002, 20003]
         for channel in self.available_channels:
-            self.channels_list.insert(tk.END, f"Canal {channel}")
+            self.channels_list.insert(ctk.END, f"Canal {channel}")
 
-        # Canal selecionado
         self.selected_channel = None
 
-        # Vincula a função de atualização da área de conversa à seleção de um canal
-        self.channels_list.bind("<Double-1>", self.confirm_join_channel)
+        self.conversation_area = ctk.CTkTextbox(self.frame, width=400, height=370, border_color="#4e4e4e", border_width=3)
+        self.conversation_area.grid(row=1, column=2, rowspan=2, padx=10)
+        self.conversation_area.configure(state="disabled")
 
-        # Área para mostrar as mensagens
-        self.conversation_area = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=40, height=20)
-        self.conversation_area.grid(row=0, column=1, rowspan=2, padx=10, pady=10)
+        self.message_entry = ctk.CTkEntry(self.frame, width=200, placeholder_text="Mensagem")
+        self.message_entry.grid(row=3, column=2, padx=10, pady=10)
 
-        # Área para enviar mensagens
-        self.message_entry = tk.Entry(root, width=30)
-        self.message_entry.grid(row=2, column=1, padx=10, pady=5)
+        img = Image.open("enviar.png")
+        self.message_button = ctk.CTkButton(self.frame, width=50, text="", corner_radius=32, fg_color="#0b6320", image=ctk.CTkImage(dark_image=img, light_image=img), command=self.send_message)
+        self.message_button.place(x=470, y=380)
 
-        # Botão para enviar mensagem
-        send_button = tk.Button(root, text="Enviar", command=self.send_message)
-        send_button.grid(row=2, column=2, padx=5, pady=5)
+        x = Image.open("cancelar.png")
+        self.close_button = ctk.CTkButton(self.frame, width=1, height=1, text="", corner_radius=32, fg_color="#1d1e1e", image=ctk.CTkImage(dark_image=x, light_image=x), command=self.close_conversation)
+        self.close_button.configure(state="disabled")
+        self.close_button.place(x=527, y=3)
 
-        # Vincula a função de exibir menu de contexto à lista de usuários online
-        self.online_users_list = tk.Listbox(root, width=15, height=20)
-        self.online_users_list.grid(row=0, column=3, rowspan=2, padx=10, pady=10)
+        self.close_button_verify()
 
-        # Vincula a função de exibir menu de contexto à lista de usuários online
-        self.online_users_list.bind("<Double-1>", self.send_message_to_user)
+        self.online_users_list = CTkListbox(self.frame, width=100, height=350, command=self.solicitar)
+        self.online_users_list.grid(row=1, column=3, rowspan=2, padx=10)
 
-        # Menu de contexto para usuários online
-        self.context_menu = tk.Menu(root, tearoff=0)
-        self.context_menu.add_command(label="Enviar Mensagem", command=self.send_message_to_user)
-
-        # Botão de desconexão
-        disconnect_button = tk.Button(root, text="Desconectar", command=self.disconnect_private)
-        disconnect_button.grid(row=2, column=3, padx=5, pady=5)
-
-        # Flag para indicar se a thread deve continuar executando
         self.running = True
 
-        # Inicia a thread para receber mensagens do servidor
-        self.receive_thread = threading.Thread(target=self.receive_messages)
+        self.receive_thread = threading.Thread(target=self.receive_tcp_messages)
         self.receive_thread.start()
 
-        # Vincula a função de encerramento da janela à função stop_threads
-        self.root.protocol("WM_DELETE_WINDOW", self.stop_threads)
+        self.protocol("WM_DELETE_WINDOW", self.stop_threads)
 
-    def stop_threads(self):
-        # Para as threads e fecha o socket
-        self.disconnect_private()
-        self.running = False
-        if self.server_socket:
-            # Envia mensagem de desconexão ao fechar a janela
-            disconnect_message = {
-                'tipo': 10,
-                'nickname': self.nickname
-            }
-            self.send_to_private(disconnect_message, self.server_socket)
-            self.server_socket.close()
-        if self.client_socket:
-            try:
-                # Envia mensagem de desconexão
-                self.send_disconnect_message()
-                self.client_socket.close()
-            except Exception as e:
-                print(f"Erro ao fechar o socket: {e}")
-
-        # Fecha o socket do servidor temporário
-        if self.temp_server_port:
-            try:
-                temp_server_address = ("127.0.0.1", self.temp_server_port)
-                temp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                temp_client_socket.connect(temp_server_address)
-                temp_client_socket.close()
-            except Exception as e:
-                print(f"Erro ao fechar o socket do servidor temporário: {e}")
-
-        # Fecha o socket do cliente temporário
-        if self.temp_client_socket:
-            try:
-                self.temp_client_socket.close()
-            except Exception as e:
-                print(f"Erro ao fechar o socket do cliente temporário: {e}")
-
-        self.root.destroy()
-
-    def confirm_join_channel(self, event):
-        self.disconnect_private()
-
-        selected_index = self.channels_list.curselection()
-        if selected_index:
-            self.send_disconnect_message()
-
-            selected_channel = self.available_channels[selected_index[0]]
-            confirmation = messagebox.askquestion("Confirmação",
-                                                f"Tem certeza de que deseja entrar no Canal {selected_channel}?")
-            if confirmation == 'yes':
-                self.selected_channel = selected_channel
-                self.connect_to_channel()
-                messagebox.showinfo("Canal Selecionado", f"Entrou no Canal {self.selected_channel}")
-                self.send_connect_message()
-                self.update_conversation_area()
-
-    def connect_to_channel(self):
-        # Função para conectar ao servidor do canal
+    def connect_server_tcp(self):
         try:
-            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.client_socket.connect(("127.0.0.1", self.selected_channel))
-            self.receive_thread = threading.Thread(target=self.receive_messages_channel)
-            self.receive_thread.start()
-        except Exception as e:
-            print(f"Erro ao conectar ao servidor do canal: {e}")
-
-    def update_conversation_area(self):
-        if self.selected_channel:
-            self.conversation_area.delete(1.0, tk.END)
-            self.conversation_area.insert(tk.END, f"|------------ Canal  {self.selected_channel} ------------|\n")
-
-    def send_message_to_user(self, event=None):
-        selected_user = self.online_users_list.get(tk.ACTIVE)
-        if selected_user:
-            confirmation = messagebox.askquestion("Conectar-se ao Usuário",
-                                                f"Você deseja se conectar a {selected_user}?")
-            if confirmation == 'yes':
-                self.disconnect_private()
-                self.connect_to_user(selected_user)
-                # Limpa a área de conversa para uma nova conversa privada
-                self.conversation_area.delete(1.0, tk.END)
-
-    def connect_to_user(self, other_user):
-        # Função para se conectar a outro usuário
-        connect_message = {
-            'tipo': 7,  # Tipo 7 indica mensagem de solicitação de conexão a outro usuário
-            'from_user': self.nickname,
-            'to_user': other_user
-        }
-        self.send_to_private(connect_message, self.server_socket)
-
-    def send_message(self):
-        message_text = self.message_entry.get()
-        if message_text:
-            if self.selected_channel or self.temp_client_socket or self.temp_server_socket:
-                if self.temp_client_socket:
-                    # Envia mensagem para o outro cliente privado
-                    mensagem_area = message_text
-                    messagem_criptografada = encrypt_message(self.client_shared_key, message_text, self.nonce)
-                    message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
-                    message_data = {
-                        'tipo': 15,
-                        'nickname': self.nickname,
-                        'message': message_text
-                    }
-                    self.send_to_private(message_data, self.temp_client_socket)
-                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {mensagem_area}\n")
-                    self.message_entry.delete(0, tk.END)
-                elif self.temp_server_socket:
-                    # Envia mensagem para o outro cliente privado
-                    mensagem_area = message_text
-                    messagem_criptografada = encrypt_message(self.server_shared_key, message_text, self.nonce)
-                    message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
-                    message_data = {
-                        'tipo': 15,
-                        'nickname': self.nickname,
-                        'message': message_text
-                    }
-                    self.send_to_private(message_data, self.temp_server_socket)
-                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {mensagem_area}\n")
-                    print(f"Servidor {self.nickname} está enviando mensagem para {self.temp_server_socket.getpeername()[1]}")
-                    self.message_entry.delete(0, tk.END)
-                else:
-                    # Se não houver cliente temporário, envia para o canal
-                    nickname = self.nickname
-                    aux = message_text
-                    messagem_criptografada = encrypt_message(self.client_shared_key, message_text, self.nonce)
-                    message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
-                    message_data = {
-                        'tipo': 5,
-                        'channel': self.selected_channel,
-                        'nickname': nickname,
-                        'message': message_text
-                    }
-                    self.send_to_server(message_data)
-                    self.conversation_area.insert(tk.END, f"Você ({message_data['nickname']}): {aux}\n")
-                    self.message_entry.delete(0, tk.END)
-
-    def send_to_server(self, data_dict):
-        # Função para enviar dados (dicionário) para o servidor
-        try:
-            if self.client_socket and self.client_socket.fileno() != -1:  # Verifica se o socket está aberto
-                json_data = json.dumps(data_dict)
-                self.client_socket.sendall(json_data.encode("utf-8"))
-        except Exception as e:
-            print(f"Erro ao enviar dados para o servidor: {e}")
-
-    def receive_messages(self):
-        # Function to receive messages from both the server and the channel
-        while self.running:
-            try:
-                if self.server_socket:
-                    data_server = self.server_socket.recv(1024).decode("utf-8")
-                    if data_server:
-                        self.handle_server_message(data_server)
-
-            except Exception as e:
-                print(f"Error receiving data: {e}")
-                break
-
-    def handle_server_message(self, data_server):
-        try:
-            received_data = json.loads(data_server)
-            # Process messages from the server
-            if received_data['tipo'] in [10, 2]:
-                # Message type 10 or 2 indicates an update to the online users list
-                online_users = received_data['online_users']
-                self.update_online_users(online_users)
-            elif received_data['tipo'] == 7:
-                # Connection request message
-                self.handle_connection_request(received_data['from_user'])
-            elif received_data['tipo'] == 8:
-                # Connection acceptance message
-                self.handle_connection_acceptance(received_data)
-            elif received_data['tipo'] == 9:
-                # Connection decline message
-                self.handle_connection_decline(received_data['from_user'])
-        except json.JSONDecodeError as json_error:
-            print(f"Error decoding JSON: {json_error}")
-
-    def receive_messages_channel(self):
-        # Function to receive messages from both the server and the channel
-        while self.running:
-            try:
-                if self.client_socket:
-                    data_channel = self.client_socket.recv(1024).decode("utf-8")
-                    if data_channel:
-                        self.handle_channel_message(data_channel)
-
-            except Exception as e:
-                print(f"Error receiving data: {e}")
-                break
-
-    def handle_channel_message(self, data_channel):
-        try:
-            received_data = json.loads(data_channel)
-            if received_data['tipo'] == 0:
-                pass
-            elif received_data['tipo'] == 200:
-                self.prime = received_data['prime']
-                self.server_public_key = received_data['channel_public_key']
-                self.nonce = binascii.unhexlify(received_data['nonce'])
-                print(f"Self.Nonce: {self.nonce}")
-                print(f"Self.Prime: {self.prime}")
-                client_private_key, client_public_key, _ = generate_dh_key_pair(self.prime)
-
-                self.client_private_key = client_private_key
-                self.client_public_key = client_public_key
-
-                dados = {
-                        'tipo': 200,
-                        'nickname': self.nickname,
-                        'client_public_key': self.client_public_key,
-                    }
-
-                self.send_to_private(dados, self.client_socket)
-
-                self.client_shared_key = key_exchange(self.client_private_key, self.server_public_key, self.prime)
-                print(f"Chave compartilhada do cliente/canal:{self.client_shared_key}")
-            else:
-                # Other message types
-                mensagem_criptografada = binascii.unhexlify(received_data['message'])
-                mensagem = decrypt_message(self.client_shared_key, mensagem_criptografada, self.nonce)
-                self.conversation_area.insert(tk.END, f"{received_data['nickname']} ({received_data['channel']}): {mensagem}\n")
-
-        except json.JSONDecodeError as json_error:
-            print(f"Error decoding JSON: {json_error}")
-
-    def send_connect_message(self):
-        if self.selected_channel:
-            message_text = f"{self.nickname} entrou no canal."
-            messagem_criptografada = encrypt_message(self.client_shared_key, message_text, self.nonce)
-            message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
-            connect_message = {
-                'tipo': 5,
-                'channel': self.selected_channel,
-                'nickname': self.nickname,
-                'message': message_text
-            }
-            self.send_to_server(connect_message)
-
-    def send_disconnect_message(self):
-        if self.selected_channel:
-            message_text = f"{self.nickname} saiu do canal."
-            messagem_criptografada = encrypt_message(self.client_shared_key, message_text, self.nonce)
-            message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
-
-            disconnect_message = {
-                'tipo': 6,
-                'channel': self.selected_channel,
-                'nickname': self.nickname,
-                'message': message_text
-            }
-            self.send_to_server(disconnect_message)
-
-    def send_introduction_message(self):
-        # Função para enviar a mensagem de apresentação assim que o cliente entrar no ChatApp
-        try:
-            # Conectar ao servidor na porta 20000
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.connect(("127.0.0.1", 20000))
-
-            # Enviar mensagem de apresentação
             introduction_message = {
-                'tipo': 1,  # Tipo 1 indica uma mensagem de apresentação
-                'nickname': self.nickname
+                'tipo': 1,
+                'nickname': self.nickname,
+                'udp_address': self.udp_socket.getsockname()
             }
-            self.send_to_private(introduction_message, self.server_socket)
+            self.send_to_server(introduction_message, self.server_socket)
         except Exception as e:
             print(f"Erro ao conectar ao servidor: {e}")
-            
-    def update_online_users(self, online_users):
-        # Função para atualizar a lista de usuários online na interface gráfica
-        self.online_users_list.delete(0, tk.END)  # Limpa a lista atual
-        self.online_users_dict = {} 
-
-        for username, address in online_users:
-            self.online_users_dict[username] = {'address': address}
-            if self.nickname != username:
-                self.online_users_list.insert(tk.END, username)
-
-    def handle_connection_request(self, from_user):
-        # Função para lidar com o pedido de conexão de outro usuário
-        confirmação = messagebox.askquestion("Pedido de Conexão", f"{from_user} quer se conectar. Aceitar o pedido?")
-        if confirmação == 'yes':
-            # Cria um servidor temporário para a conexão
-            self.disconnect_private()
-            self.temp_server_port = self.get_free_port()
-            temp_server_thread = threading.Thread(target=self.create_server, args=(self.temp_server_port,))
-            temp_server_thread.start()
-
-            # Envia uma mensagem ao servidor sobre a aceitação do pedido e a porta do servidor temporário
-            mensagem_aceitacao = {
-                'tipo': 8,
-                'from_user': self.nickname,
-                'to_user': from_user,
-                'temp_server_port': self.temp_server_port
-            }
-            self.send_to_private(mensagem_aceitacao, self.server_socket)
-            self.conversation_area.delete(1.0, tk.END)
-            self.conversation_area.insert(tk.END, f"|------ Conversando com {mensagem_aceitacao['to_user']} -----|\n")
-        else:
-            # Envia uma mensagem ao servidor sobre a recusa do pedido
-            mensagem_recusa = {
-                'tipo': 9,
-                'from_user': self.nickname,
-                'to_user': from_user,
-            }
-            self.send_to_private(mensagem_recusa, self.server_socket)
-
-    def handle_connection_acceptance(self, dados_recebidos):
-        # Lidar com a aceitação de um pedido de conexão
-        messagebox.showinfo("Pedido Aceito", f"{dados_recebidos['from_user']} aceitou seu pedido de conexão. A comunicação será estabelecida.")
-
-        # Conectar ao servidor temporário do outro usuário
-        temp_server_address = ("127.0.0.1", dados_recebidos['temp_server_port'])
-        self.temp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.temp_client_socket.connect(temp_server_address)
-
-        # Inicia uma thread para receber mensagens do servidor temporário
-        temp_receive_thread = threading.Thread(target=self.receive_temp_messages)
-        temp_receive_thread.start()
-
-        # Lógica adicional se necessário
-        self.conversation_area.insert(tk.END, f"|------ Conversando com {dados_recebidos['from_user']} -----|\n")
-
-    def handle_connection_decline(self, from_user):
-        # Função para lidar com a recusa de solicitação de conexão do tipo 9
-        messagebox.showinfo("Solicitação Recusada", f"{from_user} recusou sua solicitação de conexão.")
-        # Aqui você pode adicionar a lógica adicional se necessário.
-
-    def get_free_port(self):
-        # Encontra uma porta livre para o servidor temporário
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(('127.0.0.1', 0))
-            return s.getsockname()[1]
-        
-    def create_server(self, porta):
-        # Cria um servidor para lidar com conexões de outros clientes
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind(("127.0.0.1", porta))
-        server_socket.listen(5)
-
-        print(f"Servidor temporário escutando em {porta}")
-
-        server_private_key, server_public_key, prime = generate_dh_key_pair()
-        nonce = urandom(16)
-        aux = nonce
-        self.server_private_key = server_private_key
-        self.server_public_key = server_public_key
-        self.prime = prime
-        self.nonce = binascii.hexlify(nonce).decode('utf-8')
-
-        dados = {
-                'tipo': 100,
-                'nickname': self.nickname,
-                'prime': self.prime,
-                'server_public_key': self.server_public_key,
-                'nonce': self.nonce
-            }
-        
-        while True:
-            client_socket, address = server_socket.accept()
-            print(f"Conexão aceita de {address} na porta {porta}")
-            self.temp_server_socket = client_socket
-            # Inicia uma thread para lidar com a comunicação com o cliente
-            thread_cliente_handler = threading.Thread(target=self.handle_client_temp, args=(client_socket, address, porta))
-            thread_cliente_handler.start()
-
-            self.send_to_private(dados, self.temp_server_socket)
-            self.nonce = aux
-            
-    def receive_temp_messages(self):
-        # Recebe mensagens do servidor temporário
-        while self.running:
-            try:
-                data = self.temp_client_socket.recv(1024).decode("utf-8")
-                if not data:
-                    break
-                print(f"Mensagem recebida do servidor temporário: {data}")
-
-                message_data = json.loads(data)
-                if message_data['tipo'] == 100:
-                    self.prime = message_data['prime']
-                    self.server_public_key = message_data['server_public_key']
-                    self.nonce = binascii.unhexlify(message_data['nonce'])
-
-                    client_private_key, client_public_key, _ = generate_dh_key_pair(self.prime)
-
-                    self.client_private_key = client_private_key
-                    self.client_public_key = client_public_key
-
-                    dados = {
-                        'tipo': 100,
-                        'nickname': self.nickname,
-                        'client_public_key': self.client_public_key,
-                    }
-
-                    self.send_to_private(dados, self.temp_client_socket)
-
-                    self.client_shared_key = key_exchange(self.client_private_key, self.server_public_key, self.prime)
-                    print(f"Chave compartilhada do client:{self.client_shared_key}")
-
-                elif message_data['tipo'] == 15:
-                    mensagem_criptografada = binascii.unhexlify(message_data['message'])
-                    mensagem = decrypt_message(self.client_shared_key, mensagem_criptografada, self.nonce)
-                    self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {mensagem}\n")
-                elif message_data['tipo'] == 20:
-                    self.conversation_area.delete(1.0, tk.END)
-                    self.disconnect_private()
-
-            except Exception as e:
-                print(f"Erro ao receber dados do servidor temporário: {e}")
-                break
-
-    def handle_client_temp(self, client_socket, address, porta_canal):
-        # Lida com a comunicação com um cliente conectado ao servidor temporário
-        try:
-            # Lógica adicional para lidar com mensagens do cliente
-            while True:
-                data = client_socket.recv(1024).decode("utf-8")
-                if not data:
-                    break
-                print(f"Mensagem recebida do cliente {address} na porta {porta_canal}: {data}")
-                
-                message_data = json.loads(data)
-                if message_data['tipo'] == 100:
-                    self.client_public_key = message_data['client_public_key']
-                    self.server_shared_key = key_exchange(self.server_private_key, self.client_public_key, self.prime)
-                    print(f"Chave compartilhada do servidor:{self.server_shared_key}")
-                    
-                elif message_data['tipo'] == 15:
-                    mensagem_criptografada = binascii.unhexlify(message_data['message'])
-                    mensagem = decrypt_message(self.server_shared_key, mensagem_criptografada, self.nonce)
-                    self.conversation_area.insert(tk.END, f"{message_data['nickname']}: {mensagem}\n")
-                elif message_data['tipo'] == 20:
-                    self.conversation_area.delete(1.0, tk.END)
-                    self.disconnect_private()
-
-        except Exception as e:
-            print(f"Erro ao lidar com o cliente {address} na porta {porta_canal}: {e}")
-        finally:
-            client_socket.close()
     
-    def send_to_private(self, data_dict, socket):
-        # Função para enviar dados diretamente
+    def send_to_server(self, data_dict, socket):
         try:
             if socket and socket.fileno() != -1:
                 json_data = json.dumps(data_dict)
@@ -536,43 +113,465 @@ class ChatApp:
         except Exception as e:
             print(f"Erro ao enviar dados privados: {e}")
 
-    def disconnect_private(self):
-        dados = {
-            'tipo': 20
-        }
-        if self.temp_server_socket:
+    def receive_tcp_messages(self):
+        while self.running:
             try:
-                self.send_to_private(dados, self.temp_server_socket)
-                self.temp_server_socket.close()
+                if self.server_socket:
+                    data_server = self.server_socket.recv(1024).decode("utf-8")
+                    if data_server:
+                        self.handle_server_message(data_server)
             except Exception as e:
-                print(f"Erro ao fechar o socket do servidor temporário: {e}")
+                print(f"Error receiving data from server: {e}")
+                break
 
-        if self.temp_client_socket:
+    def handle_server_message(self, data_server):
+        try:
+            received_data = json.loads(data_server)
+            if received_data['tipo'] in [10, 2]:
+                online_users = received_data['online_users']
+                self.update_online_users(online_users)
+        except json.JSONDecodeError as json_error:
+            print(f"Error decoding JSON: {json_error}")
+
+    def update_online_users(self, online_users):
+        self.online_users_list.delete(0, ctk.END)
+        #self.online_users_dict = {} 
+
+        for username, address, udp_address in online_users:
+            if username not in self.online_users_dict:
+                # Adicione as informações do novo usuário ao dicionário
+                self.online_users_dict[username] = {
+                    'address': address,
+                    'udp_address': udp_address,
+                    'shared_key': None,
+                    'nonce': None
+                }
+            if self.nickname != username:
+                self.online_users_list.insert(ctk.END, username)
+        print(self.online_users_dict)
+
+    def get_free_port(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.bind(('127.0.0.1', 0))
+            return s.getsockname()[1]
+        
+    def create_server_udp(self, porta):
+        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp_socket.bind(("127.0.0.1", porta))
+
+        receive_thread = threading.Thread(target=self.receive_udp_messages)
+        receive_thread.start()
+
+    def receive_udp_messages(self):
+        while True:
             try:
-                self.send_to_private(dados, self.temp_client_socket)
-                self.temp_client_socket.close()
-            except Exception as e:
-                print(f"Erro ao fechar o socket do cliente temporário: {e}")
+                data, address = self.udp_socket.recvfrom(1024)
+                print(f'Mensagem recebida de {address}: {data.decode("utf-8")}')
+
+                data = json.loads(data)
+                if data['tipo'] == 5:
+                    self.solicitacao_recebida(data)
+                if data['tipo'] == 6:
+                    if self.online_users_dict[data['nickname']]['shared_key'] == None:
+                        shared_key = key_exchange(self.private_key, data['public_key'], self.prime)
+                        self.online_users_dict[data['nickname']]['shared_key'] = shared_key
+                        self.online_users_dict[data['nickname']]['nonce'] = self.nonce
+
+                    self.current_conversation = data['nickname']
+                    self.close_button_verify()
+
+                    CTkMessagebox(title="Solicitação", message=f"Solicitação de {data['nickname']} aceita!", icon="check")
+                if data['tipo'] == 7:
+                    CTkMessagebox(title="Solicitação", message=f"Solicitação de {data['nickname']} negada!", icon="cancel")
+
+                if data['tipo'] == 8:
+                    CTkMessagebox(title="Alerta", message=f"{data['nickname']} fechou a conversa!", icon="warning")
+                    self.current_conversation = None
+                    self.close_button_verify()
+                    self.conversation_area.configure(state="normal")
+                    self.conversation_area.delete(1.0, ctk.END)
+                    self.conversation_area.configure(state="disabled")
+                if data['tipo'] == 10:
+                    if data['nickname'] in self.online_users_dict:
+                        print(f"Retirando {data['nickname']}")
+                        del self.online_users_dict[data['nickname']]
+
+                if data['tipo'] == 15:
+                    address = tuple(self.online_users_dict[self.current_conversation]['udp_address'])
+                    shared_key = self.online_users_dict[self.current_conversation]['shared_key']
+                    nonce = self.online_users_dict[self.current_conversation]['nonce']
+
+                    mensagem_criptografada = binascii.unhexlify(data['message'])
+                    mensagem = decrypt_message(shared_key, mensagem_criptografada, nonce)
+
+                    self.conversation_area.configure(state="normal")
+                    self.conversation_area.insert(ctk.END, f"{data['nickname']}: {mensagem}\n")
+                    self.conversation_area.configure(state="disabled")
+
+                if data['tipo'] == 22:
+                    self.channel_users = {}
+                    self.channel_users = data['channel_users']
+                    if self.online_users_dict[data['new_user']]['shared_key'] is None and data['new_user'] != self.nickname:
+                        address = tuple(self.online_users_dict[data['new_user']]['udp_address'])
+                        self.solicitar_dados(address)
+
+                    if data['new_user'] != self.nickname:
+                        self.conversation_area.configure(state="normal")
+                        self.conversation_area.insert(ctk.END, f"{data['new_user']} entrou no canal!\n")
+                        self.conversation_area.configure(state="disabled")
+
+                if data['tipo'] == 23:
+                    self.responder_dados(data)
+
+                if data['tipo'] == 24:
+                    shared_key = key_exchange(self.private_key, data['public_key'], self.prime)
+                    self.online_users_dict[data['nickname']]['shared_key'] = shared_key
+                    self.online_users_dict[data['nickname']]['nonce'] = self.nonce
+                    print(f"Chave compartilhada: {shared_key} - Prime: {self.prime}")
                 
+                if data['tipo'] == 25:
+                    if self.channel_conversation is not None:
+                        nickname = data['nickname']
+
+                        shared_key = self.online_users_dict[nickname]['shared_key']
+                        nonce = self.online_users_dict[nickname]['nonce']
+
+                        mensagem_criptografada = binascii.unhexlify(data['message'])
+                        mensagem = decrypt_message(shared_key, mensagem_criptografada, nonce)
+
+                        self.conversation_area.configure(state="normal")
+                        self.conversation_area.insert(ctk.END, f"{nickname}: {mensagem}\n")
+                        self.conversation_area.configure(state="disabled")
+
+                if data['tipo'] == 32:
+                    self.channel_users = {}
+                    self.channel_users = data['channel_users']
+
+                    if data['old_user'] != self.nickname:
+                        self.conversation_area.configure(state="normal")
+                        self.conversation_area.insert(ctk.END, f"{data['old_user']} saiu do canal!\n")
+                        self.conversation_area.configure(state="disabled")
+
+            except Exception as e:
+                print(f'Erro ao receber mensagem: {e}')
+
+    def send_message(self):
+        if self.current_conversation != None:
+            self.conversation_area.configure(state="normal")
+            self.conversation_area.insert(ctk.END, f"Você ({self.nickname}): {self.message_entry.get()}\n")
+        
+            message_text = self.message_entry.get()
+            address = tuple(self.online_users_dict[self.current_conversation]['udp_address'])
+            shared_key = self.online_users_dict[self.current_conversation]['shared_key']
+            nonce = self.online_users_dict[self.current_conversation]['nonce']
+            messagem_criptografada = encrypt_message(shared_key, message_text, nonce)
+            message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
+
+            message_data = {
+                'tipo': 15,
+                'nickname': self.nickname,
+                'message': message_text
+            }
+
+            self.send_to_private(message_data, address)
+
+            self.conversation_area.configure(state="disabled")
+            self.message_entry.delete(0, ctk.END)
+
+        if self.channel_conversation != None:
+            self.conversation_area.configure(state="normal")
+            self.conversation_area.insert(ctk.END, f"Você ({self.nickname}): {self.message_entry.get()}\n")
+
+            for user in self.channel_users:
+                if self.online_users_dict[user]['shared_key'] is not None and user != self.nickname:
+
+                    message_text = self.message_entry.get()
+                    address = tuple(self.online_users_dict[user]['udp_address'])
+                    shared_key = self.online_users_dict[user]['shared_key']
+                    nonce = self.online_users_dict[user]['nonce']
+                    messagem_criptografada = encrypt_message(shared_key, message_text, nonce)
+                    message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
+
+                    message_data = {
+                        'tipo': 25,
+                        'nickname': self.nickname,
+                        'message': message_text
+                    }
+
+                    self.send_to_private(message_data, address)
+
+    def send_to_private(self, data_dict, address):
+        try:
+            if self.udp_socket and self.udp_socket.fileno() != -1:
+                json_data = json.dumps(data_dict)
+                self.udp_socket.sendto(json_data.encode("utf-8"),address)
+        except Exception as e:
+            print(f"Erro ao enviar dados privados: {e}")
+
+    def solicitar(self, event=None):
+        selected_user = self.online_users_list.get()
+        if selected_user:
+            msg = CTkMessagebox(title="Conversar com Usuário", message=f"Você deseja conversar com {selected_user}?", icon="question", option_1="Não", option_2="Sim")
+            confirmation = msg.get()
+            if confirmation == 'Sim':
+                self.conversation_area.configure(state="normal")
+                self.conversation_area.delete(1.0, ctk.END)
+                self.conversation_area.configure(state="disabled")
+
+                address = tuple(self.online_users_dict[selected_user]['udp_address'])
+
+                #if self.online_users_dict[selected_user]['shared_key'] == None:
+                self.private_key, public_key, self.prime = generate_dh_key_pair()
+                self.nonce = urandom(16)
+                aux = binascii.hexlify(self.nonce).decode('utf-8')
+                #else:
+                    #public_key = 3333333333
+                    #self.prime = 3
+                    #aux = "3"
+
+                self.enviar_solicitacao(address, public_key, self.prime, aux)
+
+    def solicitar_dados(self, address):
+        self.private_key, public_key, self.prime = generate_dh_key_pair()
+        self.nonce = urandom(16)
+        aux = binascii.hexlify(self.nonce).decode('utf-8')
+        message = {
+            'tipo': 23,
+            'nickname': self.nickname,
+            'public_key': public_key,
+            'prime': self.prime,
+            'nonce': aux
+        }
+        self.send_to_private(message, address)
+    
+    def responder_dados(self, data):
+        nickname = data['nickname']
+        address = tuple(self.online_users_dict[nickname]['udp_address'])
+        public_key_recebida = data['public_key']
+        prime = data['prime']
+        nonce = binascii.unhexlify(data['nonce'])
+
+        private_key, public_key, _ = generate_dh_key_pair(prime)
+        shared_key = key_exchange(private_key, public_key_recebida, prime)
+        self.online_users_dict[nickname]['shared_key'] = shared_key
+        self.online_users_dict[nickname]['nonce'] = nonce
+        print(f"Chave compartilhada: {shared_key} - Prime: {prime}")
+        message = {
+            'tipo': 24,
+            'nickname': self.nickname,
+            'public_key': public_key
+        }
+
+        self.send_to_private(message, address)
+
+    def enviar_solicitacao(self, address, public_key, prime, nonce):
+        message = {
+            'tipo': 5,
+            'nickname': self.nickname,
+            'public_key': public_key,
+            'prime': prime,
+            'nonce': nonce
+        }
+        self.send_to_private(message, address)
+
+    def solicitacao_recebida(self, data):
+        nickname = data['nickname']
+        address = tuple(self.online_users_dict[nickname]['udp_address'])
+        msg = CTkMessagebox(title="Conversar com Usuário", message=f"{nickname} deseja conversar com você, aceita?", icon="question", option_1="Não", option_2="Sim")
+        confirmation = msg.get()
+        if confirmation == 'Sim':
+            self.close()
+            self.close_channel()
+            self.solicitacao_aceita(data, address)
+        elif confirmation == 'Não':
+            self.solicitacao_negada(address)
+        
+    def solicitacao_aceita(self, data, address):
+        self.conversation_area.configure(state="normal")
+        self.conversation_area.delete(1.0, ctk.END)
+        self.conversation_area.configure(state="disabled")
+
+        nickname = data['nickname']
+        public_key = data['public_key']
+        prime = data['prime']
+        nonce = binascii.unhexlify(data['nonce'])
+
+        if self.online_users_dict[nickname]['shared_key'] == None:
+            self.private_key, self.public_key, _ = generate_dh_key_pair(prime)
+            shared_key = key_exchange(self.private_key, public_key, prime)
+            self.online_users_dict[nickname]['shared_key'] = shared_key
+            self.online_users_dict[nickname]['nonce'] = nonce
+
+        message = {
+            'tipo': 6,
+            'nickname': self.nickname,
+            'public_key': self.public_key
+        }
+        self.send_to_private(message, address)
+        
+        self.current_conversation = nickname
+        self.close_button_verify()
+        self.activate_listbox()
+
+    def solicitacao_negada(self, address):
+        message = {
+            'tipo': 7,
+            'nickname': self.nickname,
+        }
+        self.send_to_private(message, address)
+
+    def close_conversation(self):
+        if self.current_conversation != None:
+            msg = CTkMessagebox(title="Confirmação", message=f"Fechar conversa?", icon="warning", option_1="Não", option_2="Sim")
+            confirmation = msg.get()
+            if confirmation == 'Sim':
+                address = tuple(self.online_users_dict[self.current_conversation]['udp_address'])
+                message = {
+                    'tipo': 8,
+                    'nickname': self.nickname,
+                }
+                self.send_to_private(message, address)
+                self.current_conversation = None
+                self.close_button_verify()
+                self.conversation_area.configure(state="normal")
+                self.conversation_area.delete(1.0, ctk.END)
+                self.conversation_area.configure(state="disabled")
+
+            elif confirmation == 'Não':
+                pass
+
+        if self.channel_conversation != None:
+            msg = CTkMessagebox(title="Confirmação", message=f"Fechar canal?", icon="warning", option_1="Não", option_2="Sim")
+            confirmation = msg.get()
+            if confirmation == 'Sim':
+                address = tuple(self.channels_dict[self.channel_conversation]['udp_address'])
+                message = {
+                    'tipo': 31,
+                    'nickname': self.nickname,
+                }
+                self.send_to_private(message, address)
+                self.channel_conversation = None
+                self.close_button_verify()
+                self.conversation_area.configure(state="normal")
+                self.conversation_area.delete(1.0, ctk.END)
+                self.conversation_area.configure(state="disabled")
+
+            elif confirmation == 'Não':
+                pass
+        else:
+            pass
+    
+    def close_button_verify(self):
+        if self.current_conversation != None:
+            self.close_button.configure(state="normal")
+        elif self.channel_conversation != None:
+            self.close_button.configure(state="normal")
+        else:
+            self.close_button.configure(state="disabled")
+
+    def stop_threads(self):
+        # Para as threads e fecha o socket
+        self.close_conversation()
+        self.running = False
+
+        if self.server_socket:
+            # Envia mensagem de desconexão ao fechar a janela
+            disconnect_message = {
+                'tipo': 10,
+                'nickname': self.nickname,
+                'udp_address': self.udp_socket.getsockname()
+            }
+            for username, user_info in self.online_users_dict.items():
+                if user_info['shared_key'] is not None:
+                    self.send_to_private(disconnect_message, tuple(user_info['udp_address']))
+            self.send_to_server(disconnect_message, self.server_socket)
+            self.server_socket.close()
+
+        # Fecha o socket do servidor temporário
+        if self.udp_socket:
+            try:
+                self.udp_socket.close()
+            except Exception as e:
+                print(f"Erro ao fechar o socket udp: {e}")
+
+        print("chegou aqui!")
+        self.destroy()
+
+    def close(self):
+        if self.current_conversation != None:
+            address = tuple(self.online_users_dict[self.current_conversation]['udp_address'])
+            message = {
+                'tipo': 8,
+                'nickname': self.nickname,
+            }
+            self.send_to_private(message, address)
+            self.current_conversation = None
+            self.close_button_verify()
+            self.conversation_area.configure(state="normal")
+            self.conversation_area.delete(1.0, ctk.END)
+            self.conversation_area.configure(state="disabled")
+        else:
+            pass
+
+    def close_channel(self):
+        if self.channel_conversation != None:
+            address = tuple(self.channels_dict[self.channel_conversation]['udp_address'])
+            message = {
+                'tipo': 31,
+                'nickname': self.nickname,
+            }
+            self.send_to_private(message, address)
+            self.channel_conversation = None
+            self.close_button_verify()
+            self.conversation_area.configure(state="normal")
+            self.conversation_area.delete(1.0, ctk.END)
+            self.conversation_area.configure(state="disabled")
+        else:
+            pass
+
+    def confirm_join_channel(self, event):
         selected_index = self.channels_list.curselection()
-        if self.selected_channel:
-            self.send_disconnect_message()
-        # Limpar outras variáveis relacionadas à conexão privada
-        self.temp_client_socket = None
-        self.temp_server_socket = None
-        self.selected_channel = None
+        print(selected_index)
+        if selected_index >= 0:
+            selected_channel = self.available_channels[selected_index]
+            msg = CTkMessagebox(title="Confirmação", message=f"Tem certeza de que deseja entrar no Canal {selected_channel}?", icon="question", option_1="Não", option_2="Sim")
+            confirmation = msg.get()
+            if confirmation == 'Sim':
+                self.close()
+                self.close_channel()
+                self.connect_to_channel(selected_channel)
+                print("Clicou sim para entrar no canal") 
+            elif confirmation == 'Não':
+                print("Clicou não para entrar no canal")
+                self.channels_list.deactivate(selected_index)
 
-        #self.nonce = None
-        #self.prime = None
+    def connect_to_channel(self, selected_channel):
+        self.channel_conversation = selected_channel
+        self.close_button_verify()
 
-        #self.server_public_key = None
-        #self.server_private_key = None
-        #self.server_shared_key = None
-        #self.client_public_key = None
-        #self.client_public_key = None
-        self.client_shared_key = None
+        address = tuple(self.channels_dict[selected_channel]['udp_address'])
+        message = {
+            'tipo': 21,
+            'nickname': self.nickname,
+            'udp_address': self.udp_socket.getsockname()
+        }
+        self.send_to_private(message, address)
 
-        self.conversation_area.delete(1.0, tk.END)
+    def activate_listbox(self):
+        if self.current_conversation is not None:
+            self.online_users_list.selection_clear()
 
+            # Obtém o índice do usuário na lista de usuários online
+            index = None
+            for i, username in enumerate(self.online_users_dict.keys()):
+                if username == self.current_conversation:
+                    index = i
+                    break
 
-
+            # Ativa o usuário na lista de usuários online
+            if index is not None:
+                self.online_users_list.activate(index)
+    
+    def deactivate_listbox(self):
+        if self.current_conversation is not None:
+            self.online_users_list.selection_clear()

@@ -48,3 +48,26 @@ def generate_public_key(private_key, base, prime):
 def calculate_shared_secret(private_key, other_public_key, prime):
     """Calcula a chave secreta compartilhada."""
     return pow(other_public_key, private_key, prime)
+
+
+# Parâmetros públicos compartilhados
+base = 2
+
+# Gera números primos grandes para garantir segurança
+prime = generate_prime()
+
+# Parte A
+private_key_A = generate_private_key()
+public_key_A = generate_public_key(private_key_A, base, prime)
+
+# Parte B
+private_key_B = generate_private_key()
+public_key_B = generate_public_key(private_key_B, base, prime)
+
+# Troca de chaves públicas
+shared_secret_A = calculate_shared_secret(private_key_A, public_key_B, prime)
+shared_secret_B = calculate_shared_secret(private_key_B, public_key_A, prime)
+
+# Verificação
+# print("Chave secreta compartilhada (A):", shared_secret_A)
+# print("Chave secreta compartilhada (B):", shared_secret_B)

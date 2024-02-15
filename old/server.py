@@ -10,7 +10,7 @@ class ChatServer:
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(5)
         self.clients = set()
-        self.online_users = set()
+        self.online_users = set()  # Agora usa um conjunto para garantir usuários únicos
         self.nickname_to_socket = {}
         self.lock = threading.Lock()
         self.active_threads = set()
@@ -64,10 +64,10 @@ class ChatServer:
                     with self.lock:
                         user_info = (
                             message_data['nickname'],
-                            client_socket.getpeername(),  # Obtém o endereço IP do cliente conectado
-                            tuple(message_data['udp_address'])
+                            client_socket.getpeername()  # Obtém o endereço IP do cliente conectado
                         )
                         self.online_users.add(user_info)
+
                         # Adiciona ao dicionário de nickname para socket
                         self.nickname_to_socket[message_data['nickname']] = client_socket
 
@@ -83,8 +83,7 @@ class ChatServer:
                     with self.lock:
                         user_info = (
                             message_data['nickname'],
-                            client_socket.getpeername(),
-                            tuple(message_data['udp_address'])
+                            client_socket.getpeername()
                         )
                         if user_info in self.online_users:
                             self.online_users.remove(user_info)
