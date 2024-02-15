@@ -37,7 +37,8 @@ class ChatServer:
                 client_handler.start()
 
         except Exception as e:
-            print(f"Erro ao aceitar conexões: {e}")
+            pass
+            #print(f"Erro ao aceitar conexões: {e}")
         finally:
             self.server_socket.close()
 
@@ -152,7 +153,8 @@ class ChatServer:
                 
 
         except Exception as e:
-            print(f"Erro ao lidar com o cliente: {e}")
+            pass
+            #print(f"Erro ao lidar com o cliente: {e}")
         finally:
             client_socket.close()
             with self.lock:
@@ -170,7 +172,8 @@ class ChatServer:
         try:
             client_socket.sendall(message.encode("utf-8"))
         except Exception as e:
-            print(f"Erro ao enviar mensagem para um cliente: {e}")
+            pass
+            #print(f"Erro ao enviar mensagem para um cliente: {e}")
     
     def find_user_socket(self, username):
         # Encontra o socket correspondente ao usuário pelo seu nome no dicionário
@@ -185,7 +188,8 @@ class ChatServer:
                 try:
                     client_socket.sendall(message.encode("utf-8"))
                 except Exception as e:
-                    print(f"Erro ao enviar mensagem para um cliente: {e}")
+                    pass
+                    #print(f"Erro ao enviar mensagem para um cliente: {e}")
 
 # Exemplo de uso
 if __name__ == "__main__":
