@@ -19,16 +19,22 @@ class Entry(tk.Tk):
         self.frame.grid(row=0, column=0, padx=10, pady=10)
 
         self.label = tk.Label(self.frame, text="Fazer Login", font=("Arial", 20, "bold"))
-        self.label.grid(padx=10, pady=10)
+        self.label.grid(row=0, column=0, columnspan=2, padx=10, pady=10)
+
+        self.label_email = tk.Label(self.frame, text="E-mail")
+        self.label_email.grid(row=1, column=0, padx=10, pady=5, sticky="w")
 
         self.email = tk.Entry(self.frame)
-        self.email.grid(padx=10, pady=10)
+        self.email.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
 
-        self.senha = tk.Entry(self.frame)
-        self.senha.grid(padx=10, pady=10)
+        self.label_senha = tk.Label(self.frame, text="Senha")
+        self.label_senha.grid(row=2, column=0, padx=10, pady=5, sticky="w")
+
+        self.senha = tk.Entry(self.frame, show="*")
+        self.senha.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
 
         self.botao1 = tk.Button(self.frame, text="Logar", command=self.login)
-        self.botao1.grid(padx=10, pady=10)
+        self.botao1.grid(row=3, column=0, columnspan=2, padx=10, pady=10)
 
         self.botao2 = tk.Button(self, text="Não possui conta?", command=self.load_register)
         self.botao2.grid(row=1, column=0, padx=10, pady=10)
@@ -80,13 +86,17 @@ class Entry(tk.Tk):
         self.botao1.grid(row=4, column=0, padx=10, pady=10)
         self.botao2.configure(text="Já possui conta?", command=self.load_login)
         self.nickname_entry = tk.Entry(self.frame, textvariable="Nickname")
-        self.nickname_entry.grid(row=3, column=0, padx=10, pady=10)
+        self.nickname_entry.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
+
+        self.label_nickname = tk.Label(self.frame, text="Nickname")
+        self.label_nickname.grid(row=3, column=0, padx=10, pady=5, sticky="w")
 
     def load_login(self):
         self.label.configure(text="Fazer Login")
         self.botao1.configure(text="Logar", command=self.login)
         self.botao2.configure(text="Não possui conta?", command=self.load_register)
         self.nickname_entry.grid_forget()
+        self.label_nickname.grid_forget()
 
     def login_complete(self, login):
         self.destroy()
