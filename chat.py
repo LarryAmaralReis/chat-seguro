@@ -10,8 +10,9 @@ import json
 from os import urandom
 import binascii
 from functions import *
+import tkinter as tk
 
-class Chat(ctk.CTkToplevel):
+class Chat(tk.Tk):
     def __init__(self, login):
         super().__init__()
         ctk.set_appearance_mode("dark")

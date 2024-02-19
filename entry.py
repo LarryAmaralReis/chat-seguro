@@ -1,10 +1,10 @@
-import customtkinter as ctk
-from CTkMessagebox import CTkMessagebox
+import tkinter as tk
+from tkinter import messagebox
 from firebase import *
 from chat import *
 
 
-class Entry(ctk.CTk):
+class Entry(tk.Tk):
     def __init__(self):
         super().__init__()
 
@@ -15,22 +15,22 @@ class Entry(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        self.frame = ctk.CTkFrame(self)
+        self.frame = tk.Frame(self)
         self.frame.grid(row=0, column=0, padx=10, pady=10)
 
-        self.label = ctk.CTkLabel(self.frame, text="Fazer Login", font=ctk.CTkFont(size=20, weight="bold"))
+        self.label = tk.Label(self.frame, text="Fazer Login", font=("Arial", 20, "bold"))
         self.label.grid(padx=10, pady=10)
 
-        self.email = ctk.CTkEntry(self.frame, placeholder_text="E-mail")
+        self.email = tk.Entry(self.frame)
         self.email.grid(padx=10, pady=10)
 
-        self.senha = ctk.CTkEntry(self.frame, placeholder_text="Senha")
+        self.senha = tk.Entry(self.frame)
         self.senha.grid(padx=10, pady=10)
 
-        self.botao1 = ctk.CTkButton(self.frame, text="Logar", command=self.login)
+        self.botao1 = tk.Button(self.frame, text="Logar", command=self.login)
         self.botao1.grid(padx=10, pady=10)
 
-        self.botao2 = ctk.CTkButton(self, text="Não possui conta?",text_color="#000000", fg_color="#fcba03", command=self.load_register)
+        self.botao2 = tk.Button(self, text="Não possui conta?", command=self.load_register)
         self.botao2.grid(row=1, column=0, padx=10, pady=10)
 
     
@@ -47,10 +47,10 @@ class Entry(ctk.CTk):
         senha = self.senha.get()
         try:
             login = auth.sign_in_with_email_and_password(email, senha)
-            CTkMessagebox(title="CriptoChat", icon="check", message="Login realizado com sucesso!")
+            messagebox.showinfo("CriptoChat", "Login realizado com sucesso!")
             self.login_complete(login)
         except Exception as e:
-            CTkMessagebox(title="CriptoChat", icon="cancel", message="Erro ao tentar fazer login.")
+            messagebox.showinfo("CriptoChat", "Erro ao tentar fazer login!")
             print(e)
 
     def register(self):
@@ -67,19 +67,19 @@ class Entry(ctk.CTk):
                 'email': email
             }
             results = db.child("users").child(user['localId']).set(user_data)
-            CTkMessagebox(title="CriptoChat", icon="check", message="Registro realizado com sucesso!")
+            messagebox.showinfo("CriptoChat", "Registro realizado com sucesso!")
             self.load_login()
         except NicknameDuplicadoException:
-            CTkMessagebox(title="CriptoChat", icon="warning", message="Nickname já está em uso.")
+            messagebox.showinfo("CriptoChat", "Nickname já está em uso!")
         except Exception as e:
-            CTkMessagebox(title="CriptoChat", icon="cancel", message="Erro ao tentar fazer registro.")
+            messagebox.showinfo("CriptoChat", "Erro ao tentar fazer registro!")
 
     def load_register(self):
         self.label.configure(text="Fazer Registro")
         self.botao1.configure(text="Registrar", command=self.register)
         self.botao1.grid(row=4, column=0, padx=10, pady=10)
         self.botao2.configure(text="Já possui conta?", command=self.load_login)
-        self.nickname_entry = ctk.CTkEntry(self.frame, placeholder_text="Nickname")
+        self.nickname_entry = tk.Entry(self.frame, textvariable="Nickname")
         self.nickname_entry.grid(row=3, column=0, padx=10, pady=10)
 
     def load_login(self):
@@ -89,8 +89,7 @@ class Entry(ctk.CTk):
         self.nickname_entry.grid_forget()
 
     def login_complete(self, login):
-        self.withdraw()
-        self.quit()
+        self.destroy()
         chat_app = Chat(login)
         chat_app.mainloop()
 
