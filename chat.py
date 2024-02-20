@@ -1,6 +1,4 @@
 import customtkinter as ctk
-from CTkListbox import *
-from CTkMessagebox import CTkMessagebox
 from PIL import Image
 from firebase import *
 
@@ -11,6 +9,8 @@ from os import urandom
 import binascii
 from functions import *
 import tkinter as tk
+from tkinter import messagebox, scrolledtext
+import sys
 
 class Chat(tk.Tk):
     def __init__(self, login):
@@ -19,7 +19,8 @@ class Chat(tk.Tk):
         self.resizable(False, False)
         self.nickname = get_nickname_by_login(login)
         self.title(f"CriptoChat - {self.nickname}")
-        self.geometry("736x438")
+        #self.geometry("736x438")
+        self.attributes('-alpha',1)
 
         #------------------------------#
         self.server_socket = None
@@ -53,38 +54,35 @@ class Chat(tk.Tk):
         self.nonce = None
         #------------------------------#
 
-        self.frame = ctk.CTkFrame(self)
-        self.frame.grid(row=0, column=0, padx=10, pady=10)
-
-        self.channels_list = CTkListbox(self.frame, width=100, height=350, command=self.confirm_join_channel)
-        self.channels_list.grid(row=1, column=1, rowspan=2, padx=10)
+        self.channels_list = tk.Listbox(self, selectmode=tk.SINGLE, height=20, width=15)
+        self.channels_list.grid(row=0, column=0, padx=10, pady=10)
+        self.channels_list.bind("<Double-1>", self.confirm_join_channel)
 
         self.available_channels = [20001, 20002, 20003]
         for channel in self.available_channels:
-            self.channels_list.insert(ctk.END, f"Canal {channel}")
+            self.channels_list.insert(tk.END, f"Canal {channel}")
 
         self.selected_channel = None
 
-        self.conversation_area = ctk.CTkTextbox(self.frame, width=400, height=370, border_color="#4e4e4e", border_width=3)
-        self.conversation_area.grid(row=1, column=2, rowspan=2, padx=10)
+        self.conversation_area = scrolledtext.ScrolledText(self, wrap=tk.WORD, width=40, height=20)
+        self.conversation_area.grid(row=0, column=1, rowspan=2, padx=10, pady=10)
         self.conversation_area.configure(state="disabled")
 
-        self.message_entry = ctk.CTkEntry(self.frame, width=200, placeholder_text="Mensagem")
-        self.message_entry.grid(row=3, column=2, padx=10, pady=10)
+        self.message_entry = tk.Entry(self, width=30)
+        self.message_entry.grid(row=2, column=1, padx=10, pady=5)
 
-        img = Image.open("enviar.png")
-        self.message_button = ctk.CTkButton(self.frame, width=50, text="", corner_radius=32, fg_color="#0b6320", image=ctk.CTkImage(dark_image=img, light_image=img), command=self.send_message)
-        self.message_button.place(x=470, y=380)
+        self.message_button = tk.Button(self, text='Enviar', command=self.send_message)
+        self.message_button.place(x=400, y=345)
 
-        x = Image.open("cancelar.png")
-        self.close_button = ctk.CTkButton(self.frame, width=1, height=1, text="", corner_radius=32, fg_color="#1d1e1e", image=ctk.CTkImage(dark_image=x, light_image=x), command=self.close_conversation)
+        self.close_button = tk.Button(self, text='x', command=self.close_conversation)
         self.close_button.configure(state="disabled")
-        self.close_button.place(x=527, y=3)
+        self.close_button.place(x=432, y=10)
 
         self.close_button_verify()
 
-        self.online_users_list = CTkListbox(self.frame, width=100, height=350, command=self.solicitar)
-        self.online_users_list.grid(row=1, column=3, rowspan=2, padx=10)
+        self.online_users_list = tk.Listbox(self, width=15, height=20)
+        self.online_users_list.grid(row=0, column=3, rowspan=2, padx=10, pady=10)
+        self.online_users_list.bind("<Double-1>", self.solicitar)
 
         self.running = True
 
@@ -160,8 +158,8 @@ class Chat(tk.Tk):
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_socket.bind(("127.0.0.1", porta))
 
-        receive_thread = threading.Thread(target=self.receive_udp_messages)
-        receive_thread.start()
+        self.receive_udp_thread = threading.Thread(target=self.receive_udp_messages)
+        self.receive_udp_thread.start()
 
     def receive_udp_messages(self):
         while True:
@@ -186,13 +184,13 @@ class Chat(tk.Tk):
                     self.conversation_area.configure(state="disabled")
 
                     self.close_button_verify()
+                    messagebox.showinfo("Solicitação", f"Solicitação de {data['nickname']} aceita!")
 
-                    CTkMessagebox(title="Solicitação", message=f"Solicitação de {data['nickname']} aceita!", icon="check")
                 if data['tipo'] == 7:
-                    CTkMessagebox(title="Solicitação", message=f"Solicitação de {data['nickname']} negada!", icon="cancel")
+                    messagebox.showerror("Solicitação", f"Solicitação de {data['nickname']} negada!")
 
                 if data['tipo'] == 8:
-                    CTkMessagebox(title="Alerta", message=f"{data['nickname']} fechou a conversa!", icon="warning")
+                    messagebox.showwarning("Solicitação", f"{data['nickname']} fechou a conversa!")
                     self.current_conversation = None
                     self.close_button_verify()
                     self.conversation_area.configure(state="normal")
@@ -268,6 +266,13 @@ class Chat(tk.Tk):
                         self.conversation_area.configure(state="disabled")
 
             except Exception as e:
+                if hasattr(e, 'errno') and e.errno == 10054:
+                    self.close_channel()
+                    messagebox.showerror("Erro", "Erro de comunicação!")
+
+                if hasattr(e, 'errno') and e.errno == 10038:
+                    print("erro 10038")
+                    sys.exit()
                 print(f'Erro ao receber mensagem: {e}')
 
     def send_message(self):
@@ -293,7 +298,8 @@ class Chat(tk.Tk):
             self.conversation_area.configure(state="disabled")
             self.message_entry.delete(0, ctk.END)
 
-        if self.channel_conversation != None:
+        if self.channel_conversation != None and len(self.channel_users) > 0:
+            print(len(self.channel_users))
             self.conversation_area.configure(state="normal")
             self.conversation_area.insert(ctk.END, f"Você ({self.nickname}): {self.message_entry.get()}\n")
 
@@ -316,6 +322,9 @@ class Chat(tk.Tk):
 
                     self.send_to_private(message_data, address)
                     self.message_entry.delete(0, ctk.END)
+                
+                else:
+                    self.message_entry.delete(0, ctk.END)
 
     def send_to_private(self, data_dict, address):
         try:
@@ -326,11 +335,11 @@ class Chat(tk.Tk):
             print(f"Erro ao enviar dados privados: {e}")
 
     def solicitar(self, event=None):
-        selected_user = self.online_users_list.get()
+        selected_user = self.online_users_list.get(tk.ACTIVE)
         if selected_user:
-            msg = CTkMessagebox(title="Conversar com Usuário", message=f"Você deseja conversar com {selected_user}?", icon="question", option_1="Não", option_2="Sim")
-            confirmation = msg.get()
-            if confirmation == 'Sim':
+            confirmation = messagebox.askquestion("Confirmação", f"Você deseja conversar com {selected_user}?")
+
+            if confirmation == 'yes':
                 self.conversation_area.configure(state="normal")
                 self.conversation_area.delete(1.0, ctk.END)
                 self.conversation_area.configure(state="disabled")
@@ -396,13 +405,13 @@ class Chat(tk.Tk):
     def solicitacao_recebida(self, data):
         nickname = data['nickname']
         address = tuple(self.online_users_dict[nickname]['udp_address'])
-        msg = CTkMessagebox(title="Conversar com Usuário", message=f"{nickname} deseja conversar com você, aceita?", icon="question", option_1="Não", option_2="Sim")
-        confirmation = msg.get()
-        if confirmation == 'Sim':
+        confirmation = messagebox.askquestion("Conversar com Usuário", f"{nickname} deseja conversar com você, aceita?")
+        
+        if confirmation == 'yes':
             self.close()
             self.close_channel()
             self.solicitacao_aceita(data, address)
-        elif confirmation == 'Não':
+        else:
             self.solicitacao_negada(address)
         
     def solicitacao_aceita(self, data, address):
@@ -445,9 +454,8 @@ class Chat(tk.Tk):
 
     def close_conversation(self):
         if self.current_conversation != None:
-            msg = CTkMessagebox(title="Confirmação", message=f"Fechar conversa?", icon="warning", option_1="Não", option_2="Sim")
-            confirmation = msg.get()
-            if confirmation == 'Sim':
+            confirmation = messagebox.askquestion("Confirmação", f"Fechar conversa?")
+            if confirmation == 'yes':
                 address = tuple(self.online_users_dict[self.current_conversation]['udp_address'])
                 message = {
                     'tipo': 8,
@@ -460,13 +468,12 @@ class Chat(tk.Tk):
                 self.conversation_area.delete(1.0, ctk.END)
                 self.conversation_area.configure(state="disabled")
 
-            elif confirmation == 'Não':
+            else:
                 pass
 
         if self.channel_conversation != None:
-            msg = CTkMessagebox(title="Confirmação", message=f"Fechar canal?", icon="warning", option_1="Não", option_2="Sim")
-            confirmation = msg.get()
-            if confirmation == 'Sim':
+            confirmation = messagebox.askquestion("Confirmação", f"Fechar canal?")
+            if confirmation == 'yes':
                 self.deactivate_listbox()
 
                 address = tuple(self.channels_dict[self.channel_conversation]['udp_address'])
@@ -481,7 +488,7 @@ class Chat(tk.Tk):
                 self.conversation_area.delete(1.0, ctk.END)
                 self.conversation_area.configure(state="disabled")
 
-            elif confirmation == 'Não':
+            else:
                 pass
         else:
             pass
@@ -519,7 +526,6 @@ class Chat(tk.Tk):
             except Exception as e:
                 print(f"Erro ao fechar o socket udp: {e}")
 
-        print("chegou aqui!")
         self.destroy()
 
     def close(self):
@@ -547,6 +553,7 @@ class Chat(tk.Tk):
             }
             self.send_to_private(message, address)
             self.channel_conversation = None
+            self.channel_users = {} 
             self.close_button_verify()
             self.conversation_area.configure(state="normal")
             self.conversation_area.delete(1.0, ctk.END)
@@ -556,18 +563,17 @@ class Chat(tk.Tk):
 
     def confirm_join_channel(self, event):
         selected_index = self.channels_list.curselection()
-        if selected_index >= 0:
-            selected_channel = self.available_channels[selected_index]
-            msg = CTkMessagebox(title="Confirmação", message=f"Tem certeza de que deseja entrar no Canal {selected_channel}?", icon="question", option_1="Não", option_2="Sim")
-            confirmation = msg.get()
-            if confirmation == 'Sim':
+        if selected_index:
+            selected_channel = self.available_channels[selected_index[0]]
+            confirmation = messagebox.askquestion("Confirmação", f"Tem certeza de que deseja entrar no Canal {selected_channel}?")
+            if confirmation == 'yes':
                 self.close()
                 self.close_channel()
                 self.connect_to_channel(selected_channel)
                 print("Clicou sim para entrar no canal") 
-            elif confirmation == 'Não':
+            else:
                 print("Clicou não para entrar no canal")
-                self.channels_list.deactivate(selected_index)
+                self.channels_list.selection_clear(selected_index[0])
 
     def connect_to_channel(self, selected_channel):
         self.channel_conversation = selected_channel
@@ -586,10 +592,10 @@ class Chat(tk.Tk):
         self.send_to_private(message, address)
 
     def deactivate_listbox(self):
-        selected_indices = self.online_users_list.curselection()
-        if selected_indices is not None:
-            self.online_users_list.deactivate(selected_indices)
+        selected_indices_users = self.online_users_list.curselection()
+        for index in selected_indices_users:
+            self.online_users_list.selection_clear(index)
 
-        selected_indices = self.channels_list.curselection()
-        if selected_indices is not None:
-            self.channels_list.deactivate(selected_indices)
+        selected_indices_channels = self.channels_list.curselection()
+        for index in selected_indices_channels:
+            self.channels_list.selection_clear(index)
