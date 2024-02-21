@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import messagebox
 from firebase import *
 from chat import *
+from auth import *
 
 
 class Entry(tk.Tk):
@@ -52,9 +53,8 @@ class Entry(tk.Tk):
         email = self.email.get()
         senha = self.senha.get()
         try:
-            login = auth.sign_in_with_email_and_password(email, senha)
-            messagebox.showinfo("CriptoChat", "Login realizado com sucesso!")
-            self.login_complete(login)
+            self.login_user = auth.sign_in_with_email_and_password(email, senha)
+            self.authentication(email)
         except Exception as e:
             messagebox.showinfo("CriptoChat", "Erro ao tentar fazer login!")
             print(e)
@@ -97,6 +97,33 @@ class Entry(tk.Tk):
         self.botao2.configure(text="Não possui conta?", command=self.load_register)
         self.nickname_entry.grid_forget()
         self.label_nickname.grid_forget()
+
+    def authentication(self, email):
+        self.cod = enviar_email(email)
+        self.janela = tk.Toplevel()
+        self.janela.title("Autenticação")
+        self.janela.geometry("325x130")
+
+        self.label_janela = tk.Label(self.janela, text="Insira o código recebido no e-mail",font=("Arial", 15, "bold"))
+        self.label_janela.grid(row=0, column=0, pady=10)
+
+        self.codigo_janela = tk.Entry(self.janela, show="*")
+        self.codigo_janela.grid(row=1, column=0, pady=10)
+
+        self.botao_janela = tk.Button(self.janela, text="Verificar", command=self.verify_code)
+        self.botao_janela.grid(row=2, column=0, pady=10)
+        self.janela.lift()
+
+    def verify_code(self):
+        codigo = self.codigo_janela.get()
+
+        if codigo == str(self.cod):
+            messagebox.showinfo("Autenticação", "Login realizado com sucesso!")
+            self.janela.destroy()
+            self.login_complete(self.login_user)
+        else:
+            messagebox.showerror("Autenticação", "Autenticação falhou!")
+            self.janela.destroy()
 
     def login_complete(self, login):
         self.destroy()
