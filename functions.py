@@ -1,5 +1,6 @@
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms
+from cryptography.hazmat.primitives.poly1305 import Poly1305
 from dh import *
 
 def generate_dh_key_pair(prime=None):
@@ -39,3 +40,20 @@ def decrypt_message(key, ciphertext, nonce):
     decryptor = cipher.decryptor()
     decrypted_message = decryptor.update(ciphertext) + decryptor.finalize()
     return decrypted_message.decode()
+
+def generate_tag(key, message):
+    key_bytes = key.to_bytes((key.bit_length() + 7) // 8, byteorder='big')
+    poly_key = Poly1305(key_bytes)
+    poly_key.update(message.encode())
+    tag = poly_key.finalize()
+    return tag
+
+def verify_tag(key, message, tag_to_verify):
+    key_bytes = key.to_bytes((key.bit_length() + 7) // 8, byteorder='big')
+    poly_key_verifier = Poly1305(key_bytes)
+    poly_key_verifier.update(message.encode())
+    try:
+        poly_key_verifier.verify(tag_to_verify)
+        return True  # A mensagem é autêntica
+    except Exception as e:
+        return False  # A mensagem foi alterada ou não é autêntica

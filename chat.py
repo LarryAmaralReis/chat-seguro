@@ -1,5 +1,4 @@
 import customtkinter as ctk
-from PIL import Image
 from firebase import *
 
 import socket
@@ -22,6 +21,9 @@ class Chat(tk.Tk):
         #self.geometry("736x438")
         self.attributes('-alpha',1)
 
+        #------------------------------#
+        self.master_key = 54454969524667022591300178147674637787134628051833060362233619131391366951278
+        self.master_nonce = b'Z\x06\x98p#Z\xab\xc3\x81\x91\xf0\xec1\xb8\x03?'
         #------------------------------#
         self.server_socket = None
         self.udp_socket = None
@@ -105,10 +107,23 @@ class Chat(tk.Tk):
             print(f"Erro ao conectar ao servidor: {e}")
     
     def send_to_server(self, data_dict, socket):
+
+        message = json.dumps(data_dict)
+
+        tag = generate_tag(self.master_key, message)
+        tag_str = binascii.hexlify(tag).decode('utf-8')
+
+        message_text = json.dumps({
+                'message': message,
+                'tag': tag_str
+            })
+        
+        messagem_criptografada = encrypt_message(self.master_key, message_text, self.master_nonce)
+        message_str = binascii.hexlify(messagem_criptografada).decode('utf-8')
+
         try:
             if socket and socket.fileno() != -1:
-                json_data = json.dumps(data_dict)
-                socket.sendall(json_data.encode("utf-8"))
+                socket.sendall(message_str.encode("utf-8"))
         except Exception as e:
             print(f"Erro ao enviar dados privados: {e}")
 
@@ -125,20 +140,26 @@ class Chat(tk.Tk):
 
     def handle_server_message(self, data_server):
         try:
-            received_data = json.loads(data_server)
-            if received_data['tipo'] in [10, 2]:
-                online_users = received_data['online_users']
-                self.update_online_users(online_users)
+            mensagem_criptografada = binascii.unhexlify(data_server)
+            mensagem = decrypt_message(self.master_key, mensagem_criptografada, self.master_nonce)
+            data = json.loads(mensagem)
+            tag = binascii.unhexlify(data['tag'])
+            received_data = json.loads(data['message'])
+            received_data_tag = json.dumps(received_data)
+
+            if verify_tag(self.master_key, received_data_tag, tag):
+                if received_data['tipo'] in [10, 2]:
+                    online_users = received_data['online_users']
+                    self.update_online_users(online_users)
+
         except json.JSONDecodeError as json_error:
             print(f"Error decoding JSON: {json_error}")
 
     def update_online_users(self, online_users):
         self.online_users_list.delete(0, ctk.END)
-        #self.online_users_dict = {} 
 
         for username, address, udp_address in online_users:
             if username not in self.online_users_dict:
-                # Adicione as informações do novo usuário ao dicionário
                 self.online_users_dict[username] = {
                     'address': address,
                     'udp_address': udp_address,
@@ -165,9 +186,19 @@ class Chat(tk.Tk):
         while True:
             try:
                 data, address = self.udp_socket.recvfrom(1024)
-                print(f'Mensagem recebida de {address}: {data.decode("utf-8")}')
 
-                data = json.loads(data)
+                mensagem_criptografada = binascii.unhexlify(data)
+                mensagem = decrypt_message(self.master_key, mensagem_criptografada, self.master_nonce)
+                data = json.loads(mensagem)
+                tag = binascii.unhexlify(data['tag'])
+                received_data = json.loads(data['message'])
+                received_data_tag = json.dumps(received_data)
+
+                verify_tag(self.master_key, received_data_tag, tag)
+
+                print(f'Mensagem recebida de {address}: {data['message']}')
+
+                data = received_data
                 if data['tipo'] == 5:
                     self.solicitacao_recebida(data)
                 if data['tipo'] == 6:
@@ -196,6 +227,7 @@ class Chat(tk.Tk):
                     self.conversation_area.configure(state="normal")
                     self.conversation_area.delete(1.0, ctk.END)
                     self.conversation_area.configure(state="disabled")
+
                 if data['tipo'] == 10:
                     if data['nickname'] in self.online_users_dict:
                         print(f"Retirando {data['nickname']}")
@@ -208,10 +240,14 @@ class Chat(tk.Tk):
 
                     mensagem_criptografada = binascii.unhexlify(data['message'])
                     mensagem = decrypt_message(shared_key, mensagem_criptografada, nonce)
+                    tag = binascii.unhexlify(data['tag'])
 
-                    self.conversation_area.configure(state="normal")
-                    self.conversation_area.insert(ctk.END, f"{data['nickname']}: {mensagem}\n")
-                    self.conversation_area.configure(state="disabled")
+                    if verify_tag(shared_key, mensagem, tag):
+                        self.conversation_area.configure(state="normal")
+                        self.conversation_area.insert(ctk.END, f"{data['nickname']}: {mensagem}\n")
+                        self.conversation_area.configure(state="disabled")
+                    else:
+                        messagebox.showwarning("Atenção!", "Você recebeu uma mensagem que foi alterada ou não é autêntica!")
 
                 if data['tipo'] == 22:
                     self.channel_users = {}
@@ -250,10 +286,14 @@ class Chat(tk.Tk):
 
                         mensagem_criptografada = binascii.unhexlify(data['message'])
                         mensagem = decrypt_message(shared_key, mensagem_criptografada, nonce)
+                        tag = binascii.unhexlify(data['tag'])
 
-                        self.conversation_area.configure(state="normal")
-                        self.conversation_area.insert(ctk.END, f"{nickname}: {mensagem}\n")
-                        self.conversation_area.configure(state="disabled")
+                        if verify_tag(shared_key, mensagem, tag):
+                            self.conversation_area.configure(state="normal")
+                            self.conversation_area.insert(ctk.END, f"{nickname}: {mensagem}\n")
+                            self.conversation_area.configure(state="disabled")
+                        else:
+                            messagebox.showwarning("Atenção!", "Você recebeu uma mensagem que foi alterada ou não é autêntica!")
 
                 if data['tipo'] == 32:
                     self.channel_users = {}
@@ -284,13 +324,18 @@ class Chat(tk.Tk):
             address = tuple(self.online_users_dict[self.current_conversation]['udp_address'])
             shared_key = self.online_users_dict[self.current_conversation]['shared_key']
             nonce = self.online_users_dict[self.current_conversation]['nonce']
+
             messagem_criptografada = encrypt_message(shared_key, message_text, nonce)
-            message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
+            message_str = binascii.hexlify(messagem_criptografada).decode('utf-8')
+
+            tag = generate_tag(shared_key, message_text)
+            tag_str = binascii.hexlify(tag).decode('utf-8')
 
             message_data = {
                 'tipo': 15,
                 'nickname': self.nickname,
-                'message': message_text
+                'message': message_str,
+                'tag': tag_str
             }
 
             self.send_to_private(message_data, address)
@@ -299,7 +344,6 @@ class Chat(tk.Tk):
             self.message_entry.delete(0, ctk.END)
 
         if self.channel_conversation != None and len(self.channel_users) > 0:
-            print(len(self.channel_users))
             self.conversation_area.configure(state="normal")
             self.conversation_area.insert(ctk.END, f"Você ({self.nickname}): {self.message_entry.get()}\n")
 
@@ -312,12 +356,16 @@ class Chat(tk.Tk):
                     shared_key = self.online_users_dict[user]['shared_key']
                     nonce = self.online_users_dict[user]['nonce']
                     messagem_criptografada = encrypt_message(shared_key, message_text, nonce)
-                    message_text = binascii.hexlify(messagem_criptografada).decode('utf-8')
+                    message_str = binascii.hexlify(messagem_criptografada).decode('utf-8')
+
+                    tag = generate_tag(shared_key, message_text)
+                    tag_str = binascii.hexlify(tag).decode('utf-8')
 
                     message_data = {
                         'tipo': 25,
                         'nickname': self.nickname,
-                        'message': message_text
+                        'message': message_str,
+                        'tag': tag_str
                     }
 
                     self.send_to_private(message_data, address)
@@ -327,10 +375,22 @@ class Chat(tk.Tk):
                     self.message_entry.delete(0, ctk.END)
 
     def send_to_private(self, data_dict, address):
+        message = json.dumps(data_dict)
+
+        tag = generate_tag(self.master_key, message)
+        tag_str = binascii.hexlify(tag).decode('utf-8')
+
+        message_text = json.dumps({
+                'message': message,
+                'tag': tag_str
+            })
+        
+        messagem_criptografada = encrypt_message(self.master_key, message_text, self.master_nonce)
+        message_str = binascii.hexlify(messagem_criptografada).decode('utf-8')
+
         try:
             if self.udp_socket and self.udp_socket.fileno() != -1:
-                json_data = json.dumps(data_dict)
-                self.udp_socket.sendto(json_data.encode("utf-8"),address)
+                self.udp_socket.sendto(message_str.encode("utf-8"),address)
         except Exception as e:
             print(f"Erro ao enviar dados privados: {e}")
 
@@ -346,14 +406,10 @@ class Chat(tk.Tk):
 
                 address = tuple(self.online_users_dict[selected_user]['udp_address'])
 
-                #if self.online_users_dict[selected_user]['shared_key'] == None:
                 self.private_key, public_key, self.prime = generate_dh_key_pair()
                 self.nonce = urandom(16)
                 aux = binascii.hexlify(self.nonce).decode('utf-8')
-                #else:
-                    #public_key = 3333333333
-                    #self.prime = 3
-                    #aux = "3"
+
                 self.deactivate_listbox()
                 self.enviar_solicitacao(address, public_key, self.prime, aux)
 

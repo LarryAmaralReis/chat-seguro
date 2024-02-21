@@ -1,6 +1,8 @@
 import socket
 import threading
 import json
+import binascii
+from functions import *
 
 class ChatServer:
     def __init__(self):
@@ -14,6 +16,11 @@ class ChatServer:
         self.nickname_to_socket = {}
         self.lock = threading.Lock()
         self.active_threads = set()
+
+        #------------------------------#
+        self.master_key = 54454969524667022591300178147674637787134628051833060362233619131391366951278
+        self.master_nonce = b'Z\x06\x98p#Z\xab\xc3\x81\x91\xf0\xec1\xb8\x03?'
+        #------------------------------#
 
         print(f"Servidor escutando em {self.host}:{self.port}")
 
@@ -37,8 +44,7 @@ class ChatServer:
                 client_handler.start()
 
         except Exception as e:
-            pass
-            #print(f"Erro ao aceitar conexões: {e}")
+            print(f"Erro ao aceitar conexões: {e}")
         finally:
             self.server_socket.close()
 
@@ -57,9 +63,18 @@ class ChatServer:
                 if not data:
                     break
 
-                print(f"Mensagem recebida do cliente {client_socket.getpeername()}: {data}")
+                mensagem_criptografada = binascii.unhexlify(data)
+                mensagem = decrypt_message(self.master_key, mensagem_criptografada, self.master_nonce)
+                data = json.loads(mensagem)
+                tag = binascii.unhexlify(data['tag'])
+                received_data = json.loads(data['message'])
+                received_data_tag = json.dumps(received_data)
 
-                message_data = json.loads(data)
+                verify_tag(self.master_key, received_data_tag, tag)
+
+                print(f"Mensagem recebida do cliente {client_socket.getpeername()}: {data['message']}")
+
+                message_data = received_data
 
                 if message_data['tipo'] == 1:  # Tipo 1 indica mensagem de entrada
                     with self.lock:
@@ -153,8 +168,7 @@ class ChatServer:
                 
 
         except Exception as e:
-            pass
-            #print(f"Erro ao lidar com o cliente: {e}")
+            print(f"Erro ao lidar com o cliente: {e}")
         finally:
             client_socket.close()
             with self.lock:
@@ -167,18 +181,28 @@ class ChatServer:
             })
             self.broadcast_message(online_users_message)
 
-    def send_to_client(self, message, client_socket):
-        # Função para enviar mensagem para um cliente específico
-        try:
-            client_socket.sendall(message.encode("utf-8"))
-        except Exception as e:
-            pass
-            #print(f"Erro ao enviar mensagem para um cliente: {e}")
-    
     def find_user_socket(self, username):
         # Encontra o socket correspondente ao usuário pelo seu nome no dicionário
         with self.lock:
             return self.nickname_to_socket.get(username)
+
+    def send_to_client(self, message, client_socket):
+
+        tag = generate_tag(self.master_key, message)
+        tag_str = binascii.hexlify(tag).decode('utf-8')
+
+        message_text = json.dumps({
+                'message': message,
+                'tag': tag_str
+            })
+        
+        messagem_criptografada = encrypt_message(self.master_key, message_text, self.master_nonce)
+        message_str = binascii.hexlify(messagem_criptografada).decode('utf-8')
+        
+        try:
+            client_socket.sendall(message_str.encode("utf-8"))
+        except Exception as e:
+            print(f"Erro ao enviar mensagem para um cliente: {e}")
 
     def broadcast_message(self, message):
         # Envia uma mensagem para todos os clientes conectados
@@ -186,10 +210,10 @@ class ChatServer:
             for client_socket in self.clients:
                 # print(f"Enviando mensagem para:{self.clients}\n")
                 try:
-                    client_socket.sendall(message.encode("utf-8"))
+                    self.send_to_client(message, client_socket)
+                    #client_socket.sendall(message.encode("utf-8"))
                 except Exception as e:
-                    pass
-                    #print(f"Erro ao enviar mensagem para um cliente: {e}")
+                    print(f"Erro ao enviar mensagem para um cliente: {e}")
 
 # Exemplo de uso
 if __name__ == "__main__":
