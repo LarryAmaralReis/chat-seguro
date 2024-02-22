@@ -313,7 +313,7 @@ class Chat(tk.Tk):
                 if hasattr(e, 'errno') and e.errno == 10038:
                     print("erro 10038")
                     sys.exit()
-                print(f'Erro ao receber mensagem: {e}')
+                print(f"Erro ao receber mensagem: {e}")
 
     def send_message(self):
         if self.current_conversation != None:
