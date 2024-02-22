@@ -25,14 +25,14 @@ class Entry(tk.Tk):
         self.label_email = tk.Label(self.frame, text="E-mail")
         self.label_email.grid(row=1, column=0, padx=10, pady=5, sticky="w")
 
-        self.email = tk.Entry(self.frame)
-        self.email.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
+        self.email_entry = tk.Entry(self.frame)
+        self.email_entry.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
 
         self.label_senha = tk.Label(self.frame, text="Senha")
         self.label_senha.grid(row=2, column=0, padx=10, pady=5, sticky="w")
 
-        self.senha = tk.Entry(self.frame, show="*")
-        self.senha.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
+        self.senha_entry = tk.Entry(self.frame, show="*")
+        self.senha_entry.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
 
         self.botao1 = tk.Button(self.frame, text="Logar", command=self.login)
         self.botao1.grid(row=3, column=0, columnspan=2, padx=10, pady=10)
@@ -50,35 +50,33 @@ class Entry(tk.Tk):
         return False
 
     def login(self):
-        email = self.email.get()
-        senha = self.senha.get()
+        self.botao1.configure(state="disabled")
+        email = self.email_entry.get()
+        senha = self.senha_entry.get()
         try:
             self.login_user = auth.sign_in_with_email_and_password(email, senha)
             self.authentication(email)
         except Exception as e:
             messagebox.showinfo("CriptoChat", "Erro ao tentar fazer login!")
+            self.botao1.configure(state="normal")
             print(e)
 
     def register(self):
-        email = self.email.get()
-        senha = self.senha.get()
-        nickname = self.nickname_entry.get()
+        self.botao1.configure(state="disabled")
+        self.email = self.email_entry.get()
+        self.senha = self.senha_entry.get()
+        self.nickname = self.nickname_entry.get()
         try:
-            if is_nickname_duplicate(nickname):
+            if is_nickname_duplicate(self.nickname):
                 raise NicknameDuplicadoException("Nickname já está em uso.")
+            
+            self.auth_register(self.email)
 
-            user = auth.create_user_with_email_and_password(email, senha)
-            user_data = {
-                'nickname': nickname,
-                'email': email
-            }
-            results = db.child("users").child(user['localId']).set(user_data)
-            messagebox.showinfo("CriptoChat", "Registro realizado com sucesso!")
-            self.load_login()
         except NicknameDuplicadoException:
             messagebox.showinfo("CriptoChat", "Nickname já está em uso!")
         except Exception as e:
             messagebox.showinfo("CriptoChat", "Erro ao tentar fazer registro!")
+            self.botao1.configure(state="normal")
 
     def load_register(self):
         self.label.configure(text="Fazer Registro")
@@ -93,7 +91,7 @@ class Entry(tk.Tk):
 
     def load_login(self):
         self.label.configure(text="Fazer Login")
-        self.botao1.configure(text="Logar", command=self.login)
+        self.botao1.configure(text="Logar", command=self.login, state="normal")
         self.botao2.configure(text="Não possui conta?", command=self.load_register)
         self.nickname_entry.grid_forget()
         self.label_nickname.grid_forget()
@@ -103,13 +101,10 @@ class Entry(tk.Tk):
         self.janela = tk.Toplevel()
         self.janela.title("Autenticação")
         self.janela.geometry("325x130")
-
         self.label_janela = tk.Label(self.janela, text="Insira o código recebido no e-mail",font=("Arial", 15, "bold"))
         self.label_janela.grid(row=0, column=0, pady=10)
-
         self.codigo_janela = tk.Entry(self.janela, show="*")
         self.codigo_janela.grid(row=1, column=0, pady=10)
-
         self.botao_janela = tk.Button(self.janela, text="Verificar", command=self.verify_code)
         self.botao_janela.grid(row=2, column=0, pady=10)
         self.janela.lift()
@@ -123,10 +118,47 @@ class Entry(tk.Tk):
             self.login_complete(self.login_user)
         else:
             messagebox.showerror("Autenticação", "Autenticação falhou!")
+            self.botao1.configure(state="normal")
             self.janela.destroy()
 
     def login_complete(self, login):
         self.destroy()
         chat_app = Chat(login)
         chat_app.mainloop()
+
+    def auth_register(self, email):
+        self.cod = enviar_email(email)
+        self.janela = tk.Toplevel()
+        self.janela.title("Autenticação")
+        self.janela.geometry("325x130")
+        self.label_janela = tk.Label(self.janela, text="Insira o código recebido no e-mail",font=("Arial", 15, "bold"))
+        self.label_janela.grid(row=0, column=0, pady=10)
+        self.codigo_janela = tk.Entry(self.janela, show="*")
+        self.codigo_janela.grid(row=1, column=0, pady=10)
+        self.botao_janela = tk.Button(self.janela, text="Verificar", command=self.verify_code_register)
+        self.botao_janela.grid(row=2, column=0, pady=10)
+        self.janela.lift()
+
+    def verify_code_register(self):
+        codigo = self.codigo_janela.get()
+
+        if codigo == str(self.cod):
+            messagebox.showinfo("Autenticação", "Autenticação realizada com sucesso!")
+            self.janela.destroy()
+            self.register_complete()
+        else:
+            messagebox.showerror("Autenticação", "Autenticação falhou!")
+            self.botao1.configure(state="normal")
+            self.janela.destroy()
+            raise Exception("Falha na autenticação!")
+        
+    def register_complete(self):
+            user = auth.create_user_with_email_and_password(self.email, self.senha)
+            user_data = {
+                'nickname': self.nickname,
+                'email': self.email
+            }
+            results = db.child("users").child(user['localId']).set(user_data)
+            messagebox.showinfo("CriptoChat", "Registro realizado com sucesso!")
+            self.load_login()
 
