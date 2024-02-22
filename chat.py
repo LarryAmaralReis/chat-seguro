@@ -196,7 +196,7 @@ class Chat(tk.Tk):
 
                 verify_tag(self.master_key, received_data_tag, tag)
 
-                print(f'Mensagem recebida de {address}: {data['message']}')
+                print(f"Mensagem recebida de {address}: {data['message']}")
 
                 data = received_data
                 if data['tipo'] == 5:
