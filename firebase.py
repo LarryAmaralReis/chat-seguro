@@ -1,14 +1,14 @@
 import pyrebase
 
 firebaseConfig = {
-                'apiKey': "AIzaSyA25NeC-hSwceoYeEKyXVR7Pa8QlsNm5KE",
-                'authDomain': "criptochat-ba4da.firebaseapp.com",
-                'databaseURL': "https://criptochat-ba4da-default-rtdb.firebaseio.com",
-                'projectId': "criptochat-ba4da",
-                'storageBucket': "criptochat-ba4da.appspot.com",
-                'messagingSenderId': "394191700396",
-                'appId': "1:394191700396:web:f4d3374f4aefdc01c2ba09",
-                'measurementId': "G-LVD9LXKGHW"
+                'apiKey': "",
+                'authDomain': "",
+                'databaseURL': "",
+                'projectId': "",
+                'storageBucket': "",
+                'messagingSenderId': "",
+                'appId': "",
+                'measurementId': ""
 }
 
 firebase = pyrebase.initialize_app(firebaseConfig)
